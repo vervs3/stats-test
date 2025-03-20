@@ -38,87 +38,33 @@ document.addEventListener('DOMContentLoaded', function() {
             const project = chart.data.labels[index];
             console.log(`Chart click: ${chartType}, Project: ${project}`);
 
-            // Check if we're in CLM mode
-            const isClmMode = chartData.data_source === 'clm';
-
             // Формирование специфичного JQL запроса в зависимости от типа графика
             if (chartType === 'no_transitions') {
                 // Для графика "Открытые задачи со списаниями"
-                createSpecialJQL(project, 'open_tasks', isClmMode);
-            } else if (chartType === 'clm_summary') {
-                // Для графика сводки CLM
-                handleClmSummaryClick(index, project);
+                createSpecialJQL(project, 'open_tasks');
             } else {
                 // Для стандартных графиков используем обычную ссылку
                 if (typeof createJiraLink === 'function') {
-                    createJiraLink(project, isClmMode);
+                    createJiraLink(project);
                 } else {
                     console.error("createJiraLink function not found");
                 }
             }
         }
 
-        // Функция для обработки клика на график CLM Summary
-        function handleClmSummaryClick(index, label) {
-            const clmFilterId = document.querySelector('[data-base-jql]')?.getAttribute('data-base-jql')?.replace('filter=', '');
-
-            // Формируем JQL в зависимости от выбранного столбца
-            let jql = '';
-            switch(index) {
-                case 0: // CLM Issues
-                    jql = `project = CLM AND filter = ${clmFilterId}`;
-                    break;
-                case 1: // EST Issues
-                    jql = `project = EST AND issue in linkedIssues("filter = ${clmFilterId}", "relates to")`;
-                    break;
-                case 2: // Improvement Issues
-                    jql = `issuetype = "Improvement from CLM" AND issue in linkedIssues("filter = ${clmFilterId}", "links CLM to")`;
-                    break;
-                case 3: // Linked Issues
-                    jql = `issue in linkedIssuesOfRecursive("filter = ${clmFilterId}")`;
-                    break;
-                case 4: // Filtered Issues
-                    const dateFrom = document.querySelector('[data-date-from]')?.getAttribute('data-date-from');
-                    const dateTo = document.querySelector('[data-date-to]')?.getAttribute('data-date-to');
-                    let dateCondition = '';
-
-                    if (dateFrom || dateTo) {
-                        const dateParts = [];
-                        if (dateFrom) dateParts.push(`worklogDate >= "${dateFrom}"`);
-                        if (dateTo) dateParts.push(`worklogDate <= "${dateTo}"`);
-                        dateCondition = ` AND (${dateParts.join(' AND ')})`;
-                    }
-
-                    jql = `issue in linkedIssuesOfRecursive("filter = ${clmFilterId}")${dateCondition}`;
-                    break;
-                default:
-                    jql = `filter = ${clmFilterId}`;
-            }
-
-            // Заполняем модальное окно
-            document.getElementById('jqlQuery').value = jql;
-            document.getElementById('openJiraBtn').href = `https://jira.nexign.com/issues/?jql=${encodeURIComponent(jql)}`;
-
-            // Показываем модальное окно
-            const bsJqlModal = new bootstrap.Modal(document.getElementById('jqlModal'));
-            bsJqlModal.show();
-        }
-
         // Функция для создания специального JQL запроса
-        function createSpecialJQL(project, chartType, isClmMode) {
+        function createSpecialJQL(project, chartType) {
             // Базовые параметры
             const params = new URLSearchParams();
             const dateFrom = document.querySelector('[data-date-from]')?.getAttribute('data-date-from');
             const dateTo = document.querySelector('[data-date-to]')?.getAttribute('data-date-to');
             const baseJql = document.querySelector('[data-base-jql]')?.getAttribute('data-base-jql');
-            const isClmSource = document.querySelector('[data-source="clm"]') !== null || isClmMode;
 
             params.append('project', project);
             params.append('chart_type', chartType);
             if (dateFrom) params.append('date_from', dateFrom);
             if (dateTo) params.append('date_to', dateTo);
             if (baseJql) params.append('base_jql', baseJql);
-            if (isClmSource) params.append('is_clm', 'true');
 
             // Запрос на сервер для формирования специального JQL
             fetch(`/jql/special?${params.toString()}`)
@@ -138,7 +84,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
                     // Если произошла ошибка, используем обычную ссылку
                     if (typeof createJiraLink === 'function') {
-                        createJiraLink(project, isClmMode);
+                        createJiraLink(project);
                     }
                 });
         }
@@ -352,7 +298,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                     console.log(`Chart click: comparison, Project: ${project}`);
 
                                     if (typeof createJiraLink === 'function') {
-                                        createJiraLink(project, chartData.data_source === 'clm');
+                                        createJiraLink(project);
                                     } else {
                                         console.error("createJiraLink function not found");
                                     }
@@ -521,7 +467,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 'rgba(255, 99, 132, 0.7)'
             ];
 
-            const clmSummaryChart = new Chart(ctxClmSummary.getContext('2d'), {
+            new Chart(ctxClmSummary.getContext('2d'), {
                 type: 'bar',
                 data: {
                     labels: clmData.labels,
@@ -557,13 +503,6 @@ document.addEventListener('DOMContentLoaded', function() {
                                 maxRotation: 45,
                                 minRotation: 45
                             }
-                        }
-                    },
-                    onClick: (event, activeElements) => {
-                        if (activeElements.length > 0) {
-                            const index = activeElements[0].index;
-                            const label = clmData.labels[index];
-                            handleChartClick(event, 'clm_summary', activeElements, clmSummaryChart);
                         }
                     }
                 }

@@ -37,8 +37,7 @@ def register_api_routes(app):
                 # Извлекаем ID фильтра из base_jql
                 clm_filter_id = base_jql.replace('filter=', '')
 
-                # Формируем JQL для проекта, связанного с CLM через рекурсивные связи
-                # Только задачи, связанные с CLM из оригинального запроса
+                # Формируем JQL для проекта, связанного с CLM
                 jql = f'project = {project} AND issue in linkedIssuesOfRecursive("filter = {clm_filter_id}")'
 
                 # Добавляем фильтрацию по дате, если указана
@@ -125,26 +124,32 @@ def register_api_routes(app):
                 # Извлекаем ID фильтра из base_jql
                 clm_filter_id = base_jql.replace('filter=', '')
 
-                # Базовый запрос - только задачи, связанные с CLM из оригинального запроса
-                base_condition = f'project = {project} AND issue in linkedIssuesOfRecursive("filter = {clm_filter_id}")'
-
                 if chart_type == 'open_tasks':
                     # Запрос для "Открытые задачи со списаниями" в режиме CLM
-                    jql = f'{base_condition} AND status in (Open, "NEW") AND timespent > 0'
+                    jql = f'project = {project} AND issue in linkedIssuesOfRecursive("filter = {clm_filter_id}") AND status in (Open, "NEW") AND timespent > 0'
+
+                    if date_from or date_to:
+                        date_parts = []
+                        if date_from:
+                            date_parts.append(f'worklogDate >= "{date_from}"')
+                        if date_to:
+                            date_parts.append(f'worklogDate <= "{date_to}"')
+
+                        if date_parts:
+                            jql += f' AND ({" AND ".join(date_parts)})'
                 else:
-                    # Для других типов графиков в режиме CLM - используем базовое условие
-                    jql = base_condition
+                    # Для других типов графиков в режиме CLM
+                    jql = f'project = {project} AND issue in linkedIssuesOfRecursive("filter = {clm_filter_id}")'
 
-                # Добавляем фильтрацию по дате, если указана
-                if date_from or date_to:
-                    date_parts = []
-                    if date_from:
-                        date_parts.append(f'worklogDate >= "{date_from}"')
-                    if date_to:
-                        date_parts.append(f'worklogDate <= "{date_to}"')
+                    if date_from or date_to:
+                        date_parts = []
+                        if date_from:
+                            date_parts.append(f'worklogDate >= "{date_from}"')
+                        if date_to:
+                            date_parts.append(f'worklogDate <= "{date_to}"')
 
-                    if date_parts:
-                        jql += f' AND ({" AND ".join(date_parts)})'
+                        if date_parts:
+                            jql += f' AND ({" AND ".join(date_parts)})'
             else:
                 # Если нет фильтра CLM, используем обычный запрос по проекту
                 if chart_type == 'open_tasks':

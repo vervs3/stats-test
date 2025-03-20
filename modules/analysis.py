@@ -209,25 +209,13 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
 
             # Extract all unique projects from implementation issues
             implementation_projects = set()
-            linked_issue_keys = set()  # Все ключи связанных задач
-
-            # Собираем проекты и ключи связанных задач
             for issue in implementation_issues:
                 project_key = issue.get('fields', {}).get('project', {}).get('key', '')
-                issue_key = issue.get('key', '')
                 if project_key:
                     implementation_projects.add(project_key)
-                if issue_key:
-                    linked_issue_keys.add(issue_key)
 
             analysis_state[
                 'status_message'] = f'Found {len(implementation_projects)} unique projects in implementation issues'
-
-            # Сохраним CLM-фильтр для использования в запросах к JQL
-            if use_filter:
-                clm_filter_string = f"filter={clm_filter_id}"
-            else:
-                clm_filter_string = clm_jql_query or "project = CLM"
 
             # Filter by dates if specified
             if date_from or date_to:
@@ -239,24 +227,26 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
 
                 date_query = ' AND '.join(date_conditions)
 
-                # Для каждого проекта получаем только задачи, связанные с CLM из оригинального запроса
-                analysis_state['status_message'] = f'Filtering issues by worklog date and CLM connection'
+                # Get issues with worklog for the specified period across ALL implementation projects
+                analysis_state['status_message'] = f'Filtering issues by worklog date: {date_query}'
 
-                linked_issues_query = 'issue in ('
-                linked_issues_query += ','.join([f'"{key}"' for key in linked_issue_keys])
-                linked_issues_query += ')'
+                # For each project, get tasks with worklog in the specified period
+                filtered_issues = []
+                total_issues_count = 0
 
-                # Используем прямой запрос по ключам задач с фильтрацией по дате
-                jql_query = f'{linked_issues_query} AND ({date_query})'
-                filtered_issues = analyzer.get_issues_by_filter(jql_query=jql_query)
+                for project in implementation_projects:
+                    project_query = f'project = "{project}" AND ({date_query})'
+                    project_issues = analyzer.get_issues_by_filter(jql_query=project_query)
+                    filtered_issues.extend(project_issues)
 
-                analysis_state[
-                    'status_message'] = f'Found {len(filtered_issues)} issues with worklogs in specified period'
+                    total_issues_count += len(project_issues)
+                    analysis_state[
+                        'status_message'] = f'Processed {len(implementation_projects)} projects, found {total_issues_count} issues with worklogs'
 
                 # Use the final filtered issues
                 issues = filtered_issues
             else:
-                # Без фильтрации по дате используем напрямую implementation_issues
+                # Use all issues without date filtering
                 issues = implementation_issues
 
             # Prepare CLM metrics
@@ -269,8 +259,7 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
                 'linked_issues_count': len(implementation_issues),
                 'filtered_issues_count': len(issues),
                 'implementation_projects_count': len(implementation_projects),
-                'components_mapping': components_to_projects,
-                'clm_filter': clm_filter_string  # Сохраняем для использования в JQL
+                'components_mapping': components_to_projects
             }
 
             # Save CLM metrics
