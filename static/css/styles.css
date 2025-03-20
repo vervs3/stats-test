@@ -1,0 +1,191 @@
+.chart-container {
+    margin-bottom: 30px;
+    height: 350px; /* Fixed height for container */
+    position: relative; /* For proper canvas positioning */
+    overflow: hidden; /* Prevent content overflow */
+}
+
+.chart-canvas-wrapper {
+    position: relative;
+    height: 100%;
+    width: 100%;
+}
+
+.chart-img {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.progress {
+    height: 20px;
+}
+
+.analysis-card {
+    margin-bottom: 20px;
+    transition: transform 0.2s;
+}
+
+.analysis-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.chart-canvas {
+    cursor: pointer;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100% !important;
+    height: 100% !important;
+}
+
+.clickable-box {
+    cursor: pointer;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 5px;
+    margin-bottom: 10px;
+    transition: background-color 0.2s;
+}
+
+.clickable-box:hover {
+    background-color: #f8f9fa;
+}
+
+.card-body {
+    padding: 1rem;
+}
+
+.card-header {
+    padding: 0.5rem 1rem;
+}
+
+.metric-info {
+    cursor: help;
+    color: #6c757d;
+    margin-left: 5px;
+}
+
+.log-console {
+    background-color: #222;
+    color: #ccc;
+    font-family: monospace;
+    height: 300px;
+    overflow-y: auto;
+    padding: 10px;
+    margin-bottom: 20px;
+    border-radius: 4px;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-size: 12px;
+}
+
+.log-entry {
+    margin-bottom: 3px;
+    line-height: 1.4;
+}
+
+.log-entry.info {
+    color: #8ee4af;
+}
+
+.log-entry.error {
+    color: #ff6b6b;
+}
+
+.log-entry.warning {
+    color: #ffc857;
+}
+
+.log-controls {
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+/* CLM specific styles */
+.badge.bg-info {
+    font-size: 0.8em;
+    font-weight: normal;
+    margin-left: 5px;
+    vertical-align: middle;
+}
+
+.chart-filter-container {
+    margin-bottom: 15px;
+}
+
+.chart-filter-container .project-filter-options {
+    max-height: 200px;
+    overflow-y: auto;
+    padding: 10px 15px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #f8f9fa;
+}
+
+.chart-filter-container .filter-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.chart-filter-container .form-check {
+    margin-bottom: 5px;
+}
+
+/* Component to Project mapping table */
+.component-mapping-table {
+    font-size: 0.9em;
+}
+
+.component-mapping-table th {
+    font-weight: 600;
+    background-color: #f1f8ff;
+}
+
+.component-mapping-table .badge {
+    margin-right: 5px;
+    margin-bottom: 3px;
+}
+
+/* CLM Summary section */
+.clm-summary-card {
+    border: 1px solid #0dcaf0;
+    margin-bottom: 25px;
+}
+
+.clm-summary-card .card-header {
+    background-color: #0dcaf0;
+    color: white;
+}
+
+.clm-summary-data {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.clm-summary-item {
+    flex: 1 1 45%;
+    min-width: 200px;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    padding: 10px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.clm-summary-item h6 {
+    margin-bottom: 10px;
+    color: #495057;
+}
+
+.clm-summary-value {
+    font-size: 1.2em;
+    font-weight: bold;
+    color: #0dcaf0;
+}

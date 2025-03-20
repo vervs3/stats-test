@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+
+{% block title %}Анализ данных Jira - Главная{% endblock %}
+
+{% block content %}
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Запустить новый анализ</h2>
+                </div>
+                <div class="card-body">
+                    {% if analysis_state.is_running %}
+                        <div class="alert alert-info" data-analysis-running="true">
+                            <h4>Анализ запущен</h4>
+                            <p id="status-message">{{ analysis_state.status_message }}</p>
+                            <div class="progress mb-3">
+                                <div id="progress-bar" class="progress-bar" role="progressbar" style="width: {{ analysis_state.progress }}%;"
+                                    aria-valuenow="{{ analysis_state.progress }}" aria-valuemin="0" aria-valuemax="100">
+                                    {{ analysis_state.progress }}%
+                                </div>
+                            </div>
+                            <p>Пожалуйста, подождите завершения процесса...</p>
+                        </div>
+                    {% else %}
+                        <form action="/start_analysis" method="post">
+                            <!-- Выбор источника данных -->
+                            <div class="mb-3">
+                                <label class="form-label">Источник данных:</label>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="data_source" value="jira" id="source-jira" checked>
+                                    <label class="form-check-label" for="source-jira">
+                                        Jira (стандартный режим)
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="data_source" value="clm" id="source-clm">
+                                    <label class="form-check-label" for="source-clm">
+                                        CLM (с анализом связанных тикетов)
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- Метод запроса для Jira и CLM (общие) -->
+                            <div class="mb-3">
+                                <label class="form-label">Метод запроса:</label>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="use_filter" value="yes" id="use-filter" checked>
+                                    <label class="form-check-label" for="use-filter">
+                                        Использовать ID фильтра
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="use_filter" value="no" id="use-jql">
+                                    <label class="form-check-label" for="use-jql">
+                                        Использовать JQL запрос
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- Jira фильтр/JQL настройки -->
+                            <div id="jira-settings">
+                                <div class="mb-3" id="filter-id-group">
+                                    <label for="filter-id" class="form-label">ID фильтра (Jira):</label>
+                                    <input type="text" class="form-control" id="filter-id" name="filter_id" value="114476">
+                                </div>
+
+                                <div class="mb-3 d-none" id="jql-query-group">
+                                    <label for="jql-query" class="form-label">JQL запрос (Jira):</label>
+                                    <textarea class="form-control" id="jql-query" name="jql_query" rows="5">issueFunction in linkedIssuesOf("filter = 'NBSS_1440_NewFeatures_with_subtasks'", "has child") OR
+issueFunction in issuesInEpics("filter = 'Linked_to_NBSS_1440_NewFeatures_with_subtasks_Epics'") OR
+issueFunction in subtasksOf("filter = 'Linked_to_NBSS_1440_NewFeatures_with_subtasks_with_Epicissues'")</textarea>
+                                </div>
+                            </div>
+
+                            <!-- CLM фильтр/JQL настройки -->
+                            <div id="clm-settings" class="d-none">
+                                <div class="mb-3" id="clm-filter-id-group">
+                                    <label for="clm-filter-id" class="form-label">ID фильтра (CLM):</label>
+                                    <input type="text" class="form-control" id="clm-filter-id" name="clm_filter_id" value="114473">
+                                </div>
+
+                                <div class="mb-3 d-none" id="clm-jql-query-group">
+                                    <label for="clm-jql-query" class="form-label">JQL запрос (CLM):</label>
+                                    <textarea class="form-control" id="clm-jql-query" name="clm_jql_query" rows="5">project = CLM AND filter = "2025 NBSS CLMs"</textarea>
+                                </div>
+
+                                <div class="alert alert-info">
+                                    <small>
+                                        <i class="bi bi-info-circle"></i>
+                                        В режиме CLM будут найдены:
+                                        <ul class="mb-0">
+                                            <li>Связанные тикеты EST по связи "relates to"</li>
+                                            <li>Связанные тикеты "Improvement from CLM" по связи "links CLM to"</li>
+                                            <li>Все тикеты, связанные с "Improvement from CLM" по связи "is realized in"</li>
+                                        </ul>
+                                    </small>
+                                </div>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Период списания времени:</label>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <label for="date-from" class="form-label">Дата от:</label>
+                                        <input type="date" class="form-control" id="date-from" name="date_from" value="{{ default_from }}">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="date-to" class="form-label">Дата до:</label>
+                                        <input type="date" class="form-control" id="date-to" name="date_to" value="{{ default_to }}">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary" id="start-button">Запустить анализ</button>
+                        </form>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h2>История анализов</h2>
+                    <button id="toggle-select-btn" class="btn btn-sm btn-outline-primary" type="button">Выбрать</button>
+                </div>
+                <div class="card-body">
+                    {% if analysis_folders %}
+                        <form id="delete-form" action="/delete_reports" method="post" style="display: none; margin-bottom: 10px;">
+                            <div class="d-flex justify-content-end mb-3">
+                                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Вы уверены, что хотите удалить выбранные отчеты?')">
+                                    Удалить выбранные
+                                </button>
+                            </div>
+
+                            <div class="list-group">
+                                {% for analysis in analysis_folders %}
+                                <div class="list-group-item list-group-item-action analysis-card">
+                                    <div class="d-flex align-items-center">
+                                        <div class="form-check me-3 select-checkbox" style="display: none;">
+                                            <input class="form-check-input" type="checkbox" name="selected_reports" value="{{ analysis.timestamp }}" id="check-{{ analysis.timestamp }}">
+                                        </div>
+                                        <div class="flex-grow-1">
+                                            <div class="d-flex w-100 justify-content-between">
+                                                <h5 class="mb-1">
+                                                    Анализ от {{ analysis.display_timestamp }}
+                                                    {% if analysis.analysis_type == 'clm' %}
+                                                        <span class="badge bg-info">CLM</span>
+                                                    {% endif %}
+                                                </h5>
+                                                <small>{{ analysis.charts_count }} графиков</small>
+                                            </div>
+                                            <p class="mb-1">Количество задач: {{ analysis.total_issues }}</p>
+                                            {% if analysis.date_from or analysis.date_to %}
+                                                <p class="mb-1 text-muted">
+                                                    {% if analysis.date_from and analysis.date_to %}
+                                                        Период: {{ analysis.date_from }} - {{ analysis.date_to }}
+                                                    {% elif analysis.date_from %}
+                                                        Период: от {{ analysis.date_from }}
+                                                    {% elif analysis.date_to %}
+                                                        Период: до {{ analysis.date_to }}
+                                                    {% endif %}
+                                                </p>
+                                            {% endif %}
+                                            <a href="/view/{{ analysis.timestamp }}" class="stretched-link view-link">Просмотреть</a>
+                                        </div>
+                                    </div>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </form>
+
+                        <div id="normal-view" class="list-group">
+                            {% for analysis in analysis_folders %}
+                            <a href="/view/{{ analysis.timestamp }}" class="list-group-item list-group-item-action analysis-card">
+                                <div class="d-flex w-100 justify-content-between">
+                                    <h5 class="mb-1">
+                                        Анализ от {{ analysis.display_timestamp }}
+                                        {% if analysis.analysis_type == 'clm' %}
+                                            <span class="badge bg-info">CLM</span>
+                                        {% endif %}
+                                    </h5>
+                                    <small>{{ analysis.charts_count }} графиков</small>
+                                </div>
+                                <p class="mb-1">Количество задач: {{ analysis.total_issues }}</p>
+                                {% if analysis.date_from or analysis.date_to %}
+                                    <p class="mb-1 text-muted">
+                                        {% if analysis.date_from and analysis.date_to %}
+                                            Период: {{ analysis.date_from }} - {{ analysis.date_to }}
+                                        {% elif analysis.date_from %}
+                                            Период: от {{ analysis.date_from }}
+                                        {% elif analysis.date_to %}
+                                            Период: до {{ analysis.date_to }}
+                                        {% endif %}
+                                    </p>
+                                {% endif %}
+                            </a>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <p>История анализов пуста. Запустите новый анализ, чтобы увидеть результаты.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h2>Консоль логов</h2>
+                    <div>
+                        <button id="toggle-log-console" class="btn btn-sm btn-outline-primary" type="button">Скрыть</button>
+                    </div>
+                </div>
+                <div class="card-body" id="log-console-container">
+                    <div class="log-controls">
+                        <div>
+                            <button id="refresh-logs" class="btn btn-sm btn-outline-secondary">Обновить</button>
+                            <button id="clear-logs" class="btn btn-sm btn-outline-danger ms-2">Очистить</button>
+                        </div>
+                        <div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" id="auto-refresh" checked>
+                                <label class="form-check-label" for="auto-refresh">Автообновление</label>
+                            </div>
+                            <select id="log-limit" class="form-select form-select-sm d-inline-block w-auto ms-2">
+                                <option value="20">20 строк</option>
+                                <option value="50" selected>50 строк</option>
+                                <option value="100">100 строк</option>
+                                <option value="200">200 строк</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="log-console" class="log-console"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/logs.js') }}"></script>
+{% endblock %}

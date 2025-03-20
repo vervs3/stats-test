@@ -1,0 +1,394 @@
+{% extends "base.html" %}
+
+{% block title %}Результаты анализа {{ data.display_timestamp }}{% endblock %}
+
+{% block header %}
+    Результаты анализа {{ data.display_timestamp }}
+    {% if data.data_source == 'clm' %}
+        <span class="badge bg-info">CLM</span>
+    {% endif %}
+{% endblock %}
+
+{% block content %}
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Сводная информация</h3>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <table class="table">
+                                <tbody>
+                                    <tr>
+                                        <th>Всего задач:</th>
+                                        <td>{{ data.total_issues }}</td>
+                                    </tr>
+                                    <tr>
+                                        <th>Тип анализа:</th>
+                                        <td>
+                                            {% if data.data_source == 'clm' %}
+                                                <span class="badge bg-info">CLM</span> Анализ через CLM сущности
+                                            {% else %}
+                                                <span class="badge bg-primary">Jira</span> Стандартный анализ
+                                            {% endif %}
+                                        </td>
+                                    </tr>
+                                    {% if data.date_from or data.date_to %}
+                                        <tr>
+                                            <th>Период списания времени:</th>
+                                            <td>
+                                                {% if data.date_from and data.date_to %}
+                                                    {{ data.date_from }} - {{ data.date_to }}
+                                                {% elif data.date_from %}
+                                                    от {{ data.date_from }}
+                                                {% elif data.date_to %}
+                                                    до {{ data.date_to }}
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                    {% endif %}
+                                    {% if data.filter_id %}
+                                        <tr>
+                                            <th>ID фильтра (Jira):</th>
+                                            <td>{{ data.filter_id }}</td>
+                                        </tr>
+                                    {% endif %}
+                                    {% if data.jql_query %}
+                                        <tr>
+                                            <th>JQL запрос (Jira):</th>
+                                            <td><code>{{ data.jql_query }}</code></td>
+                                        </tr>
+                                    {% endif %}
+                                    {% if data.clm_filter_id %}
+                                        <tr>
+                                            <th>ID фильтра (CLM):</th>
+                                            <td>{{ data.clm_filter_id }}</td>
+                                        </tr>
+                                    {% endif %}
+                                    {% if data.clm_jql_query %}
+                                        <tr>
+                                            <th>JQL запрос (CLM):</th>
+                                            <td><code>{{ data.clm_jql_query }}</code></td>
+                                        </tr>
+                                    {% endif %}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            {% if data.summary %}
+                                <table class="table">
+                                    <tbody>
+                                        <tr>
+                                            <th>
+                                                Количество проектов:
+                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.projects_count }}">ⓘ</i>
+                                            </th>
+                                            <td>{{ data.summary.projects_count|default(0) }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>
+                                                Общая исходная оценка (часы):
+                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.total_original_estimate_hours }}">ⓘ</i>
+                                            </th>
+                                            <td>{{ "%.2f"|format(data.summary.total_original_estimate_hours|default(0)|float) }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>
+                                                Общее затраченное время (часы):
+                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.total_time_spent_hours }}">ⓘ</i>
+                                            </th>
+                                            <td>{{ "%.2f"|format(data.summary.total_time_spent_hours|default(0)|float) }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>
+                                                Средняя оценка на задачу (часы):
+                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.avg_estimate_per_issue }}">ⓘ</i>
+                                            </th>
+                                            <td>{{ "%.2f"|format(data.summary.avg_estimate_per_issue|default(0)|float) }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>
+                                                Среднее затраченное время на задачу (часы):
+                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.avg_time_spent_per_issue }}">ⓘ</i>
+                                            </th>
+                                            <td>{{ "%.2f"|format(data.summary.avg_time_spent_per_issue|default(0)|float) }}</td>
+                                        </tr>
+                                        <tr>
+                                            <th>
+                                                Общий коэффициент эффективности:
+                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.overall_efficiency }}">ⓘ</i>
+                                            </th>
+                                            <td>{{ "%.2f"|format(data.summary.overall_efficiency|default(0)|float) }}</td>
+                                        </tr>
+                                        {% if data.summary.no_transitions_tasks_count is defined %}
+                                        <tr>
+                                            <th>
+                                                Открытые задачи со списаниями:
+                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.no_transitions_tasks_count }}">ⓘ</i>
+                                            </th>
+                                            <td>{{ data.summary.no_transitions_tasks_count }}</td>
+                                        </tr>
+                                        {% endif %}
+
+                                        <!-- CLM-specific metrics -->
+                                        {% if data.data_source == 'clm' %}
+                                            {% if data.summary.clm_issues_count is defined %}
+                                            <tr>
+                                                <th>
+                                                    Количество тикетов CLM:
+                                                    <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.clm_issues_count }}">ⓘ</i>
+                                                </th>
+                                                <td>{{ data.summary.clm_issues_count }}</td>
+                                            </tr>
+                                            {% endif %}
+
+                                            {% if data.summary.est_issues_count is defined %}
+                                            <tr>
+                                                <th>
+                                                    Количество тикетов EST:
+                                                    <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.est_issues_count }}">ⓘ</i>
+                                                </th>
+                                                <td>{{ data.summary.est_issues_count }}</td>
+                                            </tr>
+                                            {% endif %}
+
+                                            {% if data.summary.improvement_issues_count is defined %}
+                                            <tr>
+                                                <th>
+                                                    Количество Improvement тикетов:
+                                                    <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.improvement_issues_count }}">ⓘ</i>
+                                                </th>
+                                                <td>{{ data.summary.improvement_issues_count }}</td>
+                                            </tr>
+                                            {% endif %}
+
+                                            {% if data.summary.linked_issues_count is defined %}
+                                            <tr>
+                                                <th>
+                                                    Всего связанных задач:
+                                                    <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.linked_issues_count }}">ⓘ</i>
+                                                </th>
+                                                <td>{{ data.summary.linked_issues_count }}</td>
+                                            </tr>
+                                            {% endif %}
+                                        {% endif %}
+                                    </tbody>
+                                </table>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- CLM Summary Section (only for CLM analysis) -->
+    {% if data.data_source == 'clm' %}
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card border-info">
+                <div class="card-header bg-info text-white">
+                    <h4>Сводная информация по CLM</h4>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="chart-container">
+                                <div class="chart-canvas-wrapper">
+                                    <canvas id="clmSummaryChart" class="chart-canvas"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <h5>Компоненты и связанные проекты</h5>
+                            {% if data.summary.components_mapping and data.summary.components_mapping|length > 0 %}
+                                <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                                    <table class="table table-sm table-striped">
+                                        <thead>
+                                            <tr>
+                                                <th>Компонент EST</th>
+                                                <th>Проекты реализации</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for component, projects in data.summary.components_mapping.items() %}
+                                                <tr>
+                                                    <td>{{ component }}</td>
+                                                    <td>
+                                                        {% for project in projects %}
+                                                            <span class="badge bg-secondary">{{ project }}</span>
+                                                        {% endfor %}
+                                                    </td>
+                                                </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            {% else %}
+                                <div class="alert alert-warning">
+                                    Не удалось сопоставить компоненты EST с проектами реализации
+                                </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="row">
+        {% if data.chart_data %}
+            <!-- Открытые задачи со списаниями (renamed from no_transitions) -->
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100 border-info">
+                    <div class="card-header bg-info text-white">
+                        <h4>Открытые задачи со списаниями</h4>
+                    </div>
+                    <div class="card-body text-center">
+                        <p class="text-muted mb-3">Задачи в статусе Open, на которые списано время за указанный период</p>
+
+                        {% if data.chart_data.special_charts.no_transitions.total > 0 %}
+                            <div class="mb-2 small text-muted">Нажмите на столбец графика, чтобы открыть соответствующие задачи в Jira</div>
+                            <div class="chart-container">
+                                <div class="chart-canvas-wrapper">
+                                    <canvas id="noTransitionsChart" class="chart-canvas"></canvas>
+                                </div>
+                            </div>
+                        {% else %}
+                            <div class="alert alert-info">
+                                <p>В анализируемый период открытых задач со списаниями не обнаружено.</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                    <div class="card-footer bg-light">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span><strong>Всего задач:</strong>
+                                {{ data.chart_data.special_charts.no_transitions.total }}
+                            </span>
+                            <span class="text-info"><i class="bi bi-info-circle"></i> Возможно, требуют внимания</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Сравнение оценки и затраченного времени -->
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h4>Сравнение оценки и затраченного времени</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-2 small text-muted">Нажмите на столбец графика, чтобы открыть соответствующие задачи в Jira</div>
+                        <div class="chart-container">
+                            <div class="chart-canvas-wrapper">
+                                <canvas id="comparisonChart" class="chart-canvas"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Проекты и ссылки на Jira как Pie Chart - переименовано в "Распределение задач по проектам" -->
+            <div class="col-lg-6 mb-4">
+                <div class="card h-100">
+                    <div class="card-header">
+                        <h4>Распределение задач по проектам</h4>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-2 small text-muted">Нажмите на сегмент диаграммы, чтобы открыть соответствующие задачи в Jira</div>
+                        <div class="chart-container">
+                            <div class="chart-canvas-wrapper">
+                                <canvas id="projectsPieChart" class="chart-canvas"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hidden JSON data for charts -->
+            <script id="chart-data" type="application/json">
+                {{ data.chart_data|tojson }}
+            </script>
+
+            <!-- CLM data for summary chart -->
+            {% if data.data_source == 'clm' and data.summary %}
+            <script id="clm-data" type="application/json">
+                {
+                    "labels": ["CLM Issues", "EST Issues", "Improvement Issues", "Linked Issues", "Filtered Issues"],
+                    "values": [
+                        {{ data.summary.clm_issues_count|default(0) }},
+                        {{ data.summary.est_issues_count|default(0) }},
+                        {{ data.summary.improvement_issues_count|default(0) }},
+                        {{ data.summary.linked_issues_count|default(0) }},
+                        {{ data.summary.filtered_issues_count|default(0) }}
+                    ]
+                }
+            </script>
+            {% endif %}
+
+            <!-- Store filter params for JQL generation -->
+            {% if data.date_from %}
+            <span data-date-from="{{ data.date_from }}" style="display:none;"></span>
+            {% endif %}
+            {% if data.date_to %}
+            <span data-date-to="{{ data.date_to }}" style="display:none;"></span>
+            {% endif %}
+
+            {% if data.data_source == 'jira' %}
+                {% if data.filter_id %}
+                <span data-base-jql="filter={{ data.filter_id }}" style="display:none;"></span>
+                {% elif data.jql_query %}
+                <span data-base-jql="{{ data.jql_query }}" style="display:none;"></span>
+                {% endif %}
+            {% else %}
+                {% if data.clm_filter_id %}
+                <span data-base-jql="filter={{ data.clm_filter_id }}" data-source="clm" style="display:none;"></span>
+                {% elif data.clm_jql_query %}
+                <span data-base-jql="{{ data.clm_jql_query }}" data-source="clm" style="display:none;"></span>
+                {% endif %}
+            {% endif %}
+        {% else %}
+            <!-- Static chart images if no interactive data -->
+            {% for chart_type, chart_path in data.charts.items() %}
+                <!-- Skip removed charts, keep only valid ones -->
+                {% if chart_type != 'completed_tasks_no_comments' and chart_type != 'original_estimate' and chart_type != 'time_spent' and chart_type != 'project_distribution' %}
+                <div class="col-lg-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-header">
+                            {% if chart_type == 'comparison' %}
+                                <h4>Сравнение оценки и затраченного времени</h4>
+                            {% elif chart_type == 'project_pie' %}
+                                <h4>Распределение задач по проектам</h4>
+                            {% elif chart_type == 'efficiency' %}
+                                <h4>Коэффициент эффективности</h4>
+                            {% elif chart_type == 'no_transitions_tasks' %}
+                                <h4>Открытые задачи со списаниями</h4>
+                            {% elif chart_type == 'clm_summary' %}
+                                <h4>Сводка по CLM</h4>
+                            {% else %}
+                                <h4>{{ chart_type|replace('_', ' ')|title }}</h4>
+                            {% endif %}
+                        </div>
+                        <div class="card-body text-center">
+                            <img src="/charts/{{ chart_path }}" class="chart-img" alt="{{ chart_type }}">
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+    </div>
+
+    {% if not data.charts and not data.chart_data %}
+        <div class="alert alert-warning">
+            <p>Графики не найдены для этого анализа.</p>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+{% endblock %}
