@@ -285,50 +285,98 @@ class JiraAnalyzer:
                               issue.get('fields', {}).get('issuetype', {}).get('name') == 'Improvement from CLM']
 
         # Get implementation issues linked to Improvements with "is realized in" link
-        improvement_keys = [issue.get('key') for issue in improvement_issues if issue.get('key')]
-
+        implementation_keys = []
         implementation_issues = []
+
+        improvement_keys = [issue.get('key') for issue in improvement_issues if issue.get('key')]
         if improvement_keys:
             self.logger.info(f"Fetching implementation issues linked to {len(improvement_keys)} Improvement issues...")
             implementation_issues = self.get_linked_issues(improvement_keys, link_type="is realized in")
-
-            # Get all subtasks and epic issues
             implementation_keys = [issue.get('key') for issue in implementation_issues if issue.get('key')]
 
-            if implementation_keys:
-                # Get subtasks using smaller chunks to avoid query limit errors
-                subtasks = []
-                for i in range(0, len(implementation_keys), 10):
-                    chunk = implementation_keys[i:i + 10]
-                    subtasks_parts = []
-                    for key in chunk:
-                        subtasks_parts.append(f'issue in subtasksOf("{key}")')
+        # Get subtasks using direct parent query instead of subtasksOf
+        subtasks = []
+        if implementation_keys:
+            for i in range(0, len(implementation_keys), 10):
+                chunk = implementation_keys[i:i + 10]
+                parents_clause = " OR ".join([f'parent = "{key}"' for key in chunk])
+                subtasks_query = parents_clause
 
-                    subtasks_query = " OR ".join(subtasks_parts)
-                    self.logger.info(f"Fetching subtasks with query: {subtasks_query}")
+                self.logger.info(f"Fetching subtasks with query: {subtasks_query}")
+                try:
                     chunk_subtasks = self.get_issues_by_filter(jql_query=subtasks_query)
                     subtasks.extend(chunk_subtasks)
+                except Exception as e:
+                    self.logger.error(f"Error fetching subtasks: {e}")
 
-                # Get epic issues using smaller chunks to avoid query limit errors
-                epic_issues = []
-                for i in range(0, len(implementation_keys), 10):
-                    chunk = implementation_keys[i:i + 10]
-                    epics_parts = []
-                    for key in chunk:
-                        epics_parts.append(f'issue in issuesInEpics("{key}")')
+        # Get epic issues using Epic Link field instead of issuesInEpics
+        epic_issues = []
+        if implementation_keys:
+            for i in range(0, len(implementation_keys), 10):
+                chunk = implementation_keys[i:i + 10]
+                epics_clause = " OR ".join([f'"Epic Link" = "{key}"' for key in chunk])
+                epics_query = epics_clause
 
-                    epics_query = " OR ".join(epics_parts)
-                    self.logger.info(f"Fetching epic issues with query: {epics_query}")
+                self.logger.info(f"Fetching epic issues with query: {epics_query}")
+                try:
                     chunk_epics = self.get_issues_by_filter(jql_query=epics_query)
                     epic_issues.extend(chunk_epics)
+                except Exception as e:
+                    self.logger.error(f"Error fetching epic issues: {e}")
 
-                # Combine all implementation-related issues
-                implementation_issues.extend(subtasks)
-                implementation_issues.extend(epic_issues)
+        # Combine all implementation-related issues
+        implementation_issues.extend(subtasks)
+        implementation_issues.extend(epic_issues)
 
         self.logger.info(
             f"Found {len(est_issues)} EST issues, {len(improvement_issues)} Improvement issues, and {len(implementation_issues)} implementation issues")
         return est_issues, improvement_issues, implementation_issues
+
+    def get_subtasks_by_rest_api(self, issue_keys):
+        """
+        Get subtasks for issues using direct REST API calls instead of JQL
+
+        Args:
+            issue_keys (list): List of parent issue keys
+
+        Returns:
+            list: List of subtask issue dictionaries
+        """
+        all_subtasks = []
+
+        for key in issue_keys:
+            try:
+                # Make a direct API call to get the issue with subtasks expanded
+                issue_url = f"{self.jira_url}/rest/api/2/issue/{key}?expand=subtasks"
+
+                response = requests.get(
+                    issue_url,
+                    headers=self.headers,
+                    timeout=30
+                )
+
+                if response.status_code == 200:
+                    issue_data = response.json()
+                    # Extract subtask keys
+                    subtask_keys = [subtask.get('key') for subtask in issue_data.get('subtasks', [])]
+
+                    if subtask_keys:
+                        self.logger.info(f"Found {len(subtask_keys)} subtasks for issue {key}")
+
+                        # Get full details for each subtask
+                        for i in range(0, len(subtask_keys), 10):
+                            subtask_chunk = subtask_keys[i:i + 10]
+                            subtask_jql = f"key in ({','.join(subtask_chunk)})"
+                            chunk_subtasks = self.get_issues_by_filter(jql_query=subtask_jql)
+                            all_subtasks.extend(chunk_subtasks)
+                else:
+                    self.logger.error(f"Error getting subtasks for issue {key}: {response.status_code}")
+                    self.logger.error(f"Response: {response.text[:200]}...")
+
+            except Exception as e:
+                self.logger.error(f"Exception getting subtasks for issue {key}: {e}")
+
+        return all_subtasks
 
     # Delegate these methods to the imported modules to maintain backward compatibility
     def process_issues_data(self, issues):

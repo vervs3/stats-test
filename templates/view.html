@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 
+{# Добавляем data-атрибуты для использования в JavaScript #}
+{% if data.data_source == 'clm' %}
+<span data-source="clm" style="display:none;"></span>
+{% endif %}
+
+{# Добавляем timestamp для доступа к данным #}
+<span data-timestamp="{{ data.timestamp }}" style="display:none;"></span>
+
 {% block title %}Результаты анализа {{ data.display_timestamp }}{% endblock %}
 
 {% block header %}

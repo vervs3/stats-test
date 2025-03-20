@@ -59,17 +59,28 @@ document.addEventListener('DOMContentLoaded', function() {
             const dateFrom = document.querySelector('[data-date-from]')?.getAttribute('data-date-from');
             const dateTo = document.querySelector('[data-date-to]')?.getAttribute('data-date-to');
             const baseJql = document.querySelector('[data-base-jql]')?.getAttribute('data-base-jql');
+            const isClm = document.querySelector('[data-source="clm"]') ? 'true' : 'false';
+
+            // Добавляем timestamp анализа для доступа к сохраненным данным
+            const timestamp = document.querySelector('[data-timestamp]')?.getAttribute('data-timestamp') ||
+                              window.location.pathname.split('/').pop();
 
             params.append('project', project);
             params.append('chart_type', chartType);
+            params.append('is_clm', isClm);
             if (dateFrom) params.append('date_from', dateFrom);
             if (dateTo) params.append('date_to', dateTo);
             if (baseJql) params.append('base_jql', baseJql);
+            if (timestamp) params.append('timestamp', timestamp);
+
+            console.log(`Creating special JQL for project: ${project}, chart type: ${chartType}, timestamp: ${timestamp}`);
 
             // Запрос на сервер для формирования специального JQL
             fetch(`/jql/special?${params.toString()}`)
                 .then(response => response.json())
                 .then(data => {
+                    console.log("Received JQL:", data.jql);
+
                     // Заполняем модальное окно
                     document.getElementById('jqlQuery').value = data.jql;
                     document.getElementById('openJiraBtn').href = data.url;
@@ -297,7 +308,11 @@ document.addEventListener('DOMContentLoaded', function() {
                                     const project = displayProjects[index];
                                     console.log(`Chart click: comparison, Project: ${project}`);
 
-                                    if (typeof createJiraLink === 'function') {
+                                    // Use the same special JQL for CLM mode
+                                    const isClmAnalysis = !!document.querySelector('[data-source="clm"]');
+                                    if (isClmAnalysis) {
+                                        createSpecialJQL(project, 'project_issues');
+                                    } else if (typeof createJiraLink === 'function') {
                                         createJiraLink(project);
                                     } else {
                                         console.error("createJiraLink function not found");
@@ -428,7 +443,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
                                 // Не открываем Jira для категории "Другие"
                                 if (project !== 'Другие') {
-                                    handleChartClick(event, 'pie', activeElements, pieChart);
+                                    // Use the same special JQL for CLM mode
+                                    const isClmAnalysis = !!document.querySelector('[data-source="clm"]');
+                                    if (isClmAnalysis) {
+                                        createSpecialJQL(project, 'project_issues');
+                                    } else {
+                                        handleChartClick(event, 'pie', activeElements, pieChart);
+                                    }
                                 } else {
                                     console.log("Clicked on 'Others' category - no action");
                                 }
@@ -460,14 +481,14 @@ document.addEventListener('DOMContentLoaded', function() {
             const clmData = JSON.parse(clmDataElement.textContent);
 
             const clmColors = [
-                'rgba(75, 192, 192, 0.7)',
-                'rgba(54, 162, 235, 0.7)',
-                'rgba(153, 102, 255, 0.7)',
-                'rgba(255, 159, 64, 0.7)',
-                'rgba(255, 99, 132, 0.7)'
+                'rgba(75, 192, 192, 0.7)',  // CLM Issues
+                'rgba(54, 162, 235, 0.7)',  // EST Issues
+                'rgba(153, 102, 255, 0.7)', // Improvement Issues
+                'rgba(255, 159, 64, 0.7)',  // Linked Issues
+                'rgba(255, 99, 132, 0.7)'   // Filtered Issues
             ];
 
-            new Chart(ctxClmSummary.getContext('2d'), {
+            const clmChart = new Chart(ctxClmSummary.getContext('2d'), {
                 type: 'bar',
                 data: {
                     labels: clmData.labels,
@@ -503,6 +524,32 @@ document.addEventListener('DOMContentLoaded', function() {
                                 maxRotation: 45,
                                 minRotation: 45
                             }
+                        }
+                    },
+                    // Добавляем обработчик клика на графике
+                    onClick: (event, activeElements) => {
+                        if (activeElements.length === 0) return;
+
+                        const index = activeElements[0].index;
+                        const label = clmData.labels[index];
+
+                        // Создаем JQL в зависимости от того, на какой столбец нажали
+                        let chartType = '';
+                        if (label === 'CLM Issues') {
+                            chartType = 'clm_issues';
+                        } else if (label === 'EST Issues') {
+                            chartType = 'est_issues';
+                        } else if (label === 'Improvement Issues') {
+                            chartType = 'improvement_issues';
+                        } else if (label === 'Linked Issues') {
+                            chartType = 'linked_issues';
+                        } else if (label === 'Filtered Issues') {
+                            chartType = 'filtered_issues';
+                        }
+
+                        if (chartType) {
+                            // Используем 'all' как параметр project чтобы получить все задачи данного типа
+                            createSpecialJQL('all', chartType);
                         }
                     }
                 }

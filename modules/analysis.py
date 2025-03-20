@@ -137,7 +137,7 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
     try:
         analysis_state['is_running'] = True
         analysis_state['progress'] = 0
-        analysis_state['status_message'] = 'Initializing analysis...'
+        analysis_state['status_message'] = 'Initialization...'
 
         # Create timestamp folder
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -163,6 +163,13 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
         # Get the right query based on data source
         clm_metrics = None
         final_jql = ""
+
+        # These variables will store issues for CLM mode
+        clm_issues = []
+        est_issues = []
+        improvement_issues = []
+        implementation_issues = []
+        filtered_issues = []
 
         if data_source == 'jira':
             # Standard Jira analysis
@@ -217,6 +224,20 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
             analysis_state[
                 'status_message'] = f'Found {len(implementation_projects)} unique projects in implementation issues'
 
+            # Обновление проектов и их задач для более точного фильтрования
+            project_issue_mapping = {}
+            project_implementation_mapping = {}
+
+            # Составляем карту проектов и их задач из implementation_issues
+            for issue in implementation_issues:
+                issue_key = issue.get('key')
+                project_key = issue.get('fields', {}).get('project', {}).get('key', '')
+
+                if issue_key and project_key:
+                    if project_key not in project_implementation_mapping:
+                        project_implementation_mapping[project_key] = []
+                    project_implementation_mapping[project_key].append(issue_key)
+
             # Filter by dates if specified
             if date_from or date_to:
                 date_conditions = []
@@ -245,9 +266,54 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
 
                 # Use the final filtered issues
                 issues = filtered_issues
+
+                # Если есть фильтрация по датам, составляем отдельную карту для filtered_issues
+                for issue in filtered_issues:
+                    issue_key = issue.get('key')
+                    project_key = issue.get('fields', {}).get('project', {}).get('key', '')
+
+                    if issue_key and project_key:
+                        if project_key not in project_issue_mapping:
+                            project_issue_mapping[project_key] = []
+                        project_issue_mapping[project_key].append(issue_key)
             else:
                 # Use all issues without date filtering
                 issues = implementation_issues
+                filtered_issues = implementation_issues
+                # Без фильтрации используем карту implementation_issues
+                project_issue_mapping = project_implementation_mapping
+
+            # Получить только open задачи
+            open_tasks_issue_keys = []
+            for issue in filtered_issues:
+                # Проверка статуса (используем непосредственно поле status вместо анализа transitions)
+                status = issue.get('fields', {}).get('status', {}).get('name', '')
+                time_spent = issue.get('fields', {}).get('timespent', 0) or 0
+
+                if status in ['Open', 'NEW'] and time_spent > 0:
+                    open_tasks_issue_keys.append(issue.get('key'))
+
+            # Сохранение ключей задач для использования в JQL-запросах
+            clm_issue_keys = [issue.get('key') for issue in clm_issues if issue.get('key')]
+            est_issue_keys = [issue.get('key') for issue in est_issues if issue.get('key')]
+            improvement_issue_keys = [issue.get('key') for issue in improvement_issues if issue.get('key')]
+            implementation_issue_keys = [issue.get('key') for issue in implementation_issues if issue.get('key')]
+            filtered_issue_keys = [issue.get('key') for issue in filtered_issues if issue.get('key')]
+
+            clm_keys_data = {
+                'clm_issue_keys': clm_issue_keys,
+                'est_issue_keys': est_issue_keys,
+                'improvement_issue_keys': improvement_issue_keys,
+                'implementation_issue_keys': implementation_issue_keys,
+                'filtered_issue_keys': filtered_issue_keys,
+                'open_tasks_issue_keys': open_tasks_issue_keys,
+                'project_issue_mapping': project_issue_mapping,
+                'project_implementation_mapping': project_implementation_mapping
+            }
+
+            clm_keys_path = os.path.join(data_dir, 'clm_issue_keys.json')
+            with open(clm_keys_path, 'w', encoding='utf-8') as f:
+                json.dump(clm_keys_data, f, indent=4, ensure_ascii=False)
 
             # Prepare CLM metrics
             components_to_projects = map_components_to_projects(est_issues, implementation_issues)
@@ -392,6 +458,50 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
         # Save raw data for interactive charts
         raw_data_path = os.path.join(data_dir, 'raw_data.json')
         df.to_json(raw_data_path, orient='records')
+
+        # If this is CLM mode, let's also identify and store open task issue keys for better JQL generation
+        if data_source == 'clm':
+            # Identify open tasks with time spent
+            open_statuses = get_improved_open_statuses(df)
+            open_tasks = df[df['status'].isin(open_statuses) & (df['time_spent_hours'] > 0)]
+
+            if not open_tasks.empty:
+                open_tasks_issue_keys = open_tasks['issue_key'].tolist()
+
+                # Update the CLM keys data with open tasks
+                try:
+                    with open(clm_keys_path, 'r', encoding='utf-8') as f:
+                        clm_keys_data = json.load(f)
+
+                    clm_keys_data['open_tasks_issue_keys'] = open_tasks_issue_keys
+
+                    with open(clm_keys_path, 'w', encoding='utf-8') as f:
+                        json.dump(clm_keys_data, f, indent=4, ensure_ascii=False)
+                except Exception as e:
+                    logger.error(f"Error updating CLM keys data with open tasks: {e}")
+
+            # Also update project-to-issues mapping from the processed data
+            project_to_issues = {}
+            for _, row in df.iterrows():
+                project = row['project']
+                issue_key = row['issue_key']
+
+                if project not in project_to_issues:
+                    project_to_issues[project] = []
+
+                project_to_issues[project].append(issue_key)
+
+            # Update the CLM keys data with project mapping
+            try:
+                with open(clm_keys_path, 'r', encoding='utf-8') as f:
+                    clm_keys_data = json.load(f)
+
+                clm_keys_data['project_issue_mapping'] = project_to_issues
+
+                with open(clm_keys_path, 'w', encoding='utf-8') as f:
+                    json.dump(clm_keys_data, f, indent=4, ensure_ascii=False)
+            except Exception as e:
+                logger.error(f"Error updating CLM keys data with project mapping: {e}")
 
         # Create visualizations
         analysis_state['status_message'] = 'Creating visualizations...'
