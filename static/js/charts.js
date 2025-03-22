@@ -142,14 +142,19 @@ document.addEventListener('DOMContentLoaded', function() {
             // Collect all unique projects
             const allProjects = [...new Set([
                 ...Object.keys(chartData.project_estimates),
-                ...Object.keys(chartData.project_time_spent)
+                ...Object.keys(chartData.project_time_spent),
+                ...(chartData.project_clm_estimates ? Object.keys(chartData.project_clm_estimates) : [])
             ])];
 
             if (allProjects.length > 0) {
-                // Sort projects by sum of estimate and time spent (descending)
+                // Sort projects by sum of all three metrics (descending)
                 allProjects.sort((a, b) => {
-                    const aTotal = (chartData.project_estimates[a] || 0) + (chartData.project_time_spent[a] || 0);
-                    const bTotal = (chartData.project_estimates[b] || 0) + (chartData.project_time_spent[b] || 0);
+                    const aTotal = (chartData.project_clm_estimates?.[a] || 0) +
+                                   (chartData.project_estimates[a] || 0) +
+                                   (chartData.project_time_spent[a] || 0);
+                    const bTotal = (chartData.project_clm_estimates?.[b] || 0) +
+                                   (chartData.project_estimates[b] || 0) +
+                                   (chartData.project_time_spent[b] || 0);
                     return bTotal - aTotal;
                 });
 
@@ -273,31 +278,69 @@ document.addEventListener('DOMContentLoaded', function() {
                     // Если график уже существует, обновляем его данные
                     if (comparisonChart) {
                         comparisonChart.data.labels = displayProjects;
-                        comparisonChart.data.datasets[0].data = estimateData;
-                        comparisonChart.data.datasets[1].data = timeSpentData;
+
+                        // Обновляем данные каждого набора данных
+                        let datasetIndex = 0;
+
+                        // Если есть CLM оценки, обновляем их данные
+                        if (chartData.project_clm_estimates &&
+                            Object.values(chartData.project_clm_estimates).some(val => val > 0)) {
+                            comparisonChart.data.datasets[datasetIndex].data =
+                                displayProjects.map(project => chartData.project_clm_estimates[project] || 0);
+                            datasetIndex++;
+                        }
+
+                        // Обновляем исходные оценки
+                        comparisonChart.data.datasets[datasetIndex].data = estimateData;
+                        datasetIndex++;
+
+                        // Обновляем затраченное время
+                        comparisonChart.data.datasets[datasetIndex].data = timeSpentData;
+
                         comparisonChart.update();
                     } else {
+                        // Получаем данные CLM оценок, если они доступны
+                        const clmEstimateData = chartData.project_clm_estimates
+                            ? displayProjects.map(project => chartData.project_clm_estimates[project] || 0)
+                            : null;
+
+                        // Создаем массив набора данных, который будет использоваться для графика
+                        const datasets = [];
+
+                        // Добавляем CLM оценку только если данные доступны
+                        if (clmEstimateData && clmEstimateData.some(val => val > 0)) {
+                            datasets.push({
+                                label: 'CLM оценка (часы)',
+                                data: clmEstimateData,
+                                backgroundColor: 'rgba(75, 192, 192, 0.7)',  // Зеленоватый цвет
+                                borderColor: 'rgba(75, 192, 192, 1)',
+                                borderWidth: 1
+                            });
+                        }
+
+                        // Добавляем исходную оценку и затраченное время всегда
+                        datasets.push({
+                            label: 'Исходная оценка (часы)',
+                            data: estimateData,
+                            backgroundColor: 'rgba(54, 162, 235, 0.7)',  // Синий
+                            borderColor: 'rgba(54, 162, 235, 1)',
+                            borderWidth: 1
+                        });
+
+                        datasets.push({
+                            label: 'Затраченное время (часы)',
+                            data: timeSpentData,
+                            backgroundColor: 'rgba(255, 99, 132, 0.7)',  // Красный
+                            borderColor: 'rgba(255, 99, 132, 1)',
+                            borderWidth: 1
+                        });
+
                         // Создаем новый график
                         comparisonChart = new Chart(ctxComparison.getContext('2d'), {
                             type: 'bar',
                             data: {
                                 labels: displayProjects,
-                                datasets: [
-                                    {
-                                        label: 'Исходная оценка (часы)',
-                                        data: estimateData,
-                                        backgroundColor: 'rgba(54, 162, 235, 0.7)',
-                                        borderColor: 'rgba(54, 162, 235, 1)',
-                                        borderWidth: 1
-                                    },
-                                    {
-                                        label: 'Затраченное время (часы)',
-                                        data: timeSpentData,
-                                        backgroundColor: 'rgba(255, 99, 132, 0.7)',
-                                        borderColor: 'rgba(255, 99, 132, 1)',
-                                        borderWidth: 1
-                                    }
-                                ]
+                                datasets: datasets
                             },
                             options: {
                                 ...commonOptions,

@@ -94,7 +94,7 @@ class JiraAnalyzer:
             self.logger.error(f"Error checking connection: {e}")
             return False
 
-    def get_issues_by_filter(self, jql_query=None, filter_id=None, max_results=10000):
+    def get_issues_by_filter(self, jql_query=None, filter_id=None, max_results=10000, additional_fields=None):
         """
         Get issues from Jira using a JQL query or filter ID.
         No limit on the number of issues (default 10000 should be sufficient).
@@ -104,6 +104,7 @@ class JiraAnalyzer:
             jql_query (str): JQL query string
             filter_id (str/int): Jira filter ID to use instead of JQL
             max_results (int): Maximum number of results to return
+            additional_fields (list): Additional fields to request beyond the standard set
 
         Returns:
             list: List of issue dictionaries
@@ -122,24 +123,32 @@ class JiraAnalyzer:
         start_at = 0
         all_issues = []
 
+        # Базовый набор полей
+        fields = [
+            'project',
+            'summary',
+            'issuetype',
+            'timeoriginalestimate',
+            'timespent',
+            'status',
+            'worklog',
+            'comment',
+            'attachment',
+            'created',  # Request creation date
+            'components',  # Request components for CLM/EST analysis
+            'issuelinks'  # Request issue links for relationship analysis
+        ]
+
+        # Добавляем дополнительные поля, если они указаны
+        if additional_fields:
+            fields.extend(additional_fields)
+
         while True:
             query = {
                 'jql': query_string,
                 'maxResults': 100,  # Get 100 issues per request (API limit)
                 'startAt': start_at,
-                'fields': [
-                    'project',
-                    'summary',
-                    'issuetype',
-                    'timeoriginalestimate',
-                    'timespent',
-                    'status',
-                    'worklog',
-                    'comment',
-                    'attachment',
-                    'created',  # Request creation date
-                    'components'  # Request components for CLM/EST analysis
-                ],
+                'fields': fields,
                 'expand': ['changelog']  # Request changelog for transitions analysis
             }
 
@@ -191,7 +200,6 @@ class JiraAnalyzer:
                 break
 
         return all_issues
-
     def get_linked_issues(self, issues, link_type=None, max_depth=1):
         """
         Get issues linked to the provided issues.
@@ -269,12 +277,32 @@ class JiraAnalyzer:
         clm_keys = [issue.get('key') for issue in clm_issues if issue.get('key')]
 
         # Get EST issues related to CLM with "relates to" link
+        # ВАЖНО: Явно указываем связь с конкретными CLM из изначального запроса
         self.logger.info(f"Fetching EST issues related to {len(clm_keys)} CLM issues...")
-        est_issues = self.get_linked_issues(clm_keys, link_type="relates to")
+
+        # Разбиваем на части, чтобы избежать слишком длинного запроса
+        est_issues = []
+        batch_size = 20
+
+        for i in range(0, len(clm_keys), batch_size):
+            batch = clm_keys[i:i + batch_size]
+            # Создаем точный запрос для связанных EST тикетов
+            batch_jql = f'project = "Оценки CLM" AND issueFunction in linkedIssuesOf("key in ({",".join(batch)})", "relates to")'
+
+            self.logger.info(f"Fetching EST batch {i // batch_size + 1} with query: {batch_jql}")
+            batch_issues = self.get_issues_by_filter(jql_query=batch_jql, additional_fields=['customfield_12307'])
+            est_issues.extend(batch_issues)
+
+            self.logger.info(f"Retrieved {len(batch_issues)} EST issues from batch {i // batch_size + 1}")
+
+        # Проверяем что получили EST тикеты
+        if not est_issues:
+            self.logger.warning("No EST issues found related to the specific CLM issues")
 
         # Filter to include only EST project issues
         est_issues = [issue for issue in est_issues if
-                      issue.get('fields', {}).get('project', {}).get('key') == 'EST']
+                      issue.get('fields', {}).get('project', {}).get('key') == 'EST' or
+                      issue.get('fields', {}).get('project', {}).get('name') == 'Оценки CLM']
 
         # Get Improvement issues linked to CLM with "links CLM to" link
         self.logger.info(f"Fetching Improvement issues linked to CLM...")
@@ -294,11 +322,38 @@ class JiraAnalyzer:
             implementation_issues = self.get_linked_issues(improvement_keys, link_type="is realized in")
             implementation_keys = [issue.get('key') for issue in implementation_issues if issue.get('key')]
 
+        # Get ALL implementation issue keys including existing ones from improvement links
+        all_implementation_keys = implementation_keys.copy()
+
+        # Also get subtasks for improvement issues directly
+        improvement_subtasks = []
+        if improvement_keys:
+            for i in range(0, len(improvement_keys), 10):
+                chunk = improvement_keys[i:i + 10]
+                parents_clause = " OR ".join([f'parent = "{key}"' for key in chunk])
+                subtasks_query = parents_clause
+
+                self.logger.info(f"Fetching subtasks of improvement issues with query: {subtasks_query}")
+                try:
+                    chunk_subtasks = self.get_issues_by_filter(jql_query=subtasks_query)
+                    improvement_subtasks.extend(chunk_subtasks)
+
+                    # Add these subtask keys to the implementation keys for getting their subtasks too
+                    for subtask in chunk_subtasks:
+                        key = subtask.get('key')
+                        if key and key not in all_implementation_keys:
+                            all_implementation_keys.append(key)
+                except Exception as e:
+                    self.logger.error(f"Error fetching improvement subtasks: {e}")
+
+        # Use all_implementation_keys instead of implementation_keys for further subtask fetching
+        self.logger.info(f"Total implementation keys including improvement subtasks: {len(all_implementation_keys)}")
+
         # Get subtasks using direct parent query instead of subtasksOf
         subtasks = []
-        if implementation_keys:
-            for i in range(0, len(implementation_keys), 10):
-                chunk = implementation_keys[i:i + 10]
+        if all_implementation_keys:
+            for i in range(0, len(all_implementation_keys), 10):
+                chunk = all_implementation_keys[i:i + 10]
                 parents_clause = " OR ".join([f'parent = "{key}"' for key in chunk])
                 subtasks_query = parents_clause
 
@@ -311,9 +366,9 @@ class JiraAnalyzer:
 
         # Get epic issues using Epic Link field instead of issuesInEpics
         epic_issues = []
-        if implementation_keys:
-            for i in range(0, len(implementation_keys), 10):
-                chunk = implementation_keys[i:i + 10]
+        if all_implementation_keys:  # Use all_implementation_keys here too
+            for i in range(0, len(all_implementation_keys), 10):
+                chunk = all_implementation_keys[i:i + 10]
                 epics_clause = " OR ".join([f'"Epic Link" = "{key}"' for key in chunk])
                 epics_query = epics_clause
 
@@ -325,8 +380,133 @@ class JiraAnalyzer:
                     self.logger.error(f"Error fetching epic issues: {e}")
 
         # Combine all implementation-related issues
+        implementation_issues.extend(improvement_subtasks)  # Add improvement subtasks
         implementation_issues.extend(subtasks)
         implementation_issues.extend(epic_issues)
+
+        # ДОБАВЛЕНО: Рекурсивный поиск всех подзадач для всех типов тикетов
+        self.logger.info("Starting recursive search for subtasks of all issue types...")
+
+        # Создадим множество всех известных ключей, чтобы избежать повторного сбора
+        all_known_keys = set(all_implementation_keys)
+
+        # Сначала соберем все задачи по типам, чтобы иметь представление о составе
+        issue_types_before = {}
+        for issue in implementation_issues:
+            issue_type = issue.get('fields', {}).get('issuetype', {}).get('name', 'Unknown')
+            if issue_type in issue_types_before:
+                issue_types_before[issue_type] += 1
+            else:
+                issue_types_before[issue_type] = 1
+
+        self.logger.info(f"Issue types before recursive subtask search: {issue_types_before}")
+
+        # Итеративный поиск подзадач для всех найденных задач
+        max_iterations = 3  # Ограничим количество итераций, чтобы избежать бесконечного цикла
+        for iteration in range(max_iterations):
+            # Получаем все текущие ключи задач
+            current_keys = [issue.get('key') for issue in implementation_issues if issue.get('key')]
+
+            # Отфильтруем только новые ключи, которые мы еще не обрабатывали
+            new_keys = [key for key in current_keys if key not in all_known_keys]
+
+            if not new_keys:
+                self.logger.info(f"No new keys found in iteration {iteration + 1}, stopping recursive search")
+                break
+
+            self.logger.info(f"Iteration {iteration + 1}: Found {len(new_keys)} new keys to check for subtasks")
+
+            # Добавим новые ключи в множество известных
+            all_known_keys.update(new_keys)
+
+            # Поиск подзадач для новых ключей
+            new_subtasks = []
+            for i in range(0, len(new_keys), 10):
+                chunk = new_keys[i:i + 10]
+                parents_clause = " OR ".join([f'parent = "{key}"' for key in chunk])
+                subtasks_query = parents_clause
+
+                self.logger.info(f"Fetching subtasks for new keys (batch {i // 10 + 1}) with query: {subtasks_query}")
+                try:
+                    chunk_subtasks = self.get_issues_by_filter(jql_query=subtasks_query)
+                    new_subtasks.extend(chunk_subtasks)
+                except Exception as e:
+                    self.logger.error(f"Error fetching subtasks for new keys: {e}")
+
+            if not new_subtasks:
+                self.logger.info(f"No new subtasks found in iteration {iteration + 1}")
+                break
+
+            self.logger.info(f"Found {len(new_subtasks)} new subtasks in iteration {iteration + 1}")
+
+            # Добавим новые подзадачи к общему списку
+            implementation_issues.extend(new_subtasks)
+
+        # Выведем итоговую статистику по типам задач после рекурсивного поиска
+        issue_types_after = {}
+        for issue in implementation_issues:
+            issue_type = issue.get('fields', {}).get('issuetype', {}).get('name', 'Unknown')
+            if issue_type in issue_types_after:
+                issue_types_after[issue_type] += 1
+            else:
+                issue_types_after[issue_type] = 1
+
+        self.logger.info(f"Issue types after recursive subtask search: {issue_types_after}")
+        subtask_count_after = issue_types_after.get('Sub-task', 0) + issue_types_after.get('Subtask', 0)
+        self.logger.info(f"Total subtasks after recursive search: {subtask_count_after}")
+
+        # Deduplicate implementation issues by key
+        implementation_keys_set = set()
+        unique_implementation_issues = []
+
+        for issue in implementation_issues:
+            key = issue.get('key')
+            if key and key not in implementation_keys_set:
+                implementation_keys_set.add(key)
+                unique_implementation_issues.append(issue)
+
+        implementation_issues = unique_implementation_issues
+        self.logger.info(
+            f"Total unique implementation issues after including all subtasks: {len(implementation_issues)}")
+
+        # Выведем диагностическую информацию о связях CLM и EST
+        self.logger.info(f"CLM to EST relationship check:")
+        clm_to_est_map = {}
+        for issue in est_issues:
+            est_key = issue.get('key', '')
+            linked_clm = []
+
+            # Ищем связи с CLM
+            for link in issue.get('fields', {}).get('issuelinks', []):
+                if 'inwardIssue' in link and link.get('inwardIssue', {}).get('key', '') in clm_keys:
+                    linked_clm.append(link.get('inwardIssue', {}).get('key', ''))
+
+            if linked_clm:
+                clm_to_est_map[est_key] = linked_clm
+                self.logger.info(f"EST {est_key} is linked to CLM: {', '.join(linked_clm)}")
+
+        # Выведем информацию о поле customfield_12307 в EST задачах
+        estimation_count = 0
+        for issue in est_issues:
+            estimation = issue.get('fields', {}).get('customfield_12307')
+            if estimation is not None:
+                estimation_count += 1
+                self.logger.info(f"EST {issue.get('key', '')} has estimation: {estimation}")
+
+        self.logger.info(f"Found {estimation_count} EST issues with customfield_12307 values out of {len(est_issues)}")
+
+        # Логируем типы задач для проверки наличия подзадач
+        issue_types = {}
+        for issue in implementation_issues:
+            issue_type = issue.get('fields', {}).get('issuetype', {}).get('name', 'Unknown')
+            if issue_type in issue_types:
+                issue_types[issue_type] += 1
+            else:
+                issue_types[issue_type] = 1
+
+        self.logger.info(f"Final implementation issues by type: {issue_types}")
+        subtask_count = issue_types.get('Sub-task', 0) + issue_types.get('Subtask', 0)
+        self.logger.info(f"Final subtasks in implementation issues: {subtask_count}")
 
         self.logger.info(
             f"Found {len(est_issues)} EST issues, {len(improvement_issues)} Improvement issues, and {len(implementation_issues)} implementation issues")

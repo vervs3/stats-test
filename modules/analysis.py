@@ -15,7 +15,8 @@ CHARTS_DIR = 'jira_charts'
 
 def prepare_chart_data(df, data_source='jira', use_filter=True, filter_id=None, jql_query=None,
                        date_from=None, date_to=None, clm_filter_id=None, clm_jql_query=None,
-                       clm_metrics=None):
+                       clm_metrics=None, clm_issues=None, est_issues=None, improvement_issues=None,
+                       implementation_issues=None, filtered_issues=None, components_to_projects=None):
     """
     Prepare chart data for interactive charts with special attention to special charts
 
@@ -30,17 +31,38 @@ def prepare_chart_data(df, data_source='jira', use_filter=True, filter_id=None, 
         clm_filter_id: ID of the CLM filter used
         clm_jql_query: CLM JQL query used
         clm_metrics: CLM-specific metrics
+        clm_issues: List of CLM issues (optional)
+        est_issues: List of EST issues (optional)
+        improvement_issues: List of improvement issues (optional)
+        implementation_issues: List of implementation issues (optional)
+        filtered_issues: List of filtered issues (optional)
+        components_to_projects: Mapping of EST components to projects (optional)
 
     Returns:
         dict: Chart data for interactive charts
     """
     import logging
     from modules.data_processor import get_status_categories, get_improved_open_statuses
+    import json
 
     logger = logging.getLogger(__name__)
 
     try:
-        # Project data
+        # IMPROVED: If we're in CLM mode and have filtered_issues, use their keys for filtering
+        if data_source == 'clm' and filtered_issues:
+            # Get the keys of all filtered issues for CLM mode
+            filtered_issue_keys = set([issue.get('key') for issue in filtered_issues if issue.get('key')])
+            logger.info(f"Filtering chart data to {len(filtered_issue_keys)} CLM-related issues")
+
+            # Filter the DataFrame to only include these issues
+            if not df.empty and 'issue_key' in df.columns and filtered_issue_keys:
+                # Apply the filter only if we have data
+                filtered_df = df[df['issue_key'].isin(filtered_issue_keys)]
+                logger.info(f"Filtered from {len(df)} to {len(filtered_df)} rows for chart data")
+                # Use the filtered DataFrame for all subsequent operations
+                df = filtered_df
+
+        # Project data from the (potentially filtered) DataFrame
         project_counts = df['project'].value_counts().to_dict()
         project_estimates = df.groupby('project')['original_estimate_hours'].sum().to_dict()
         project_time_spent = df.groupby('project')['time_spent_hours'].sum().to_dict()
@@ -52,6 +74,108 @@ def prepare_chart_data(df, data_source='jira', use_filter=True, filter_id=None, 
 
         logger.info(f"Prepared basic chart data with {len(all_projects)} projects")
 
+        # Extract issue keys by project for JQL generation
+        project_issue_mapping = {}
+        for project in all_projects:
+            project_df = df[df['project'] == project]
+            project_issue_mapping[project] = project_df['issue_key'].tolist()
+
+        logger.info(f"Created project-to-issues mapping for {len(project_issue_mapping)} projects")
+
+        # НОВОЕ: Добавление CLM оценок из EST тикетов
+        project_clm_estimates = {}
+        if data_source == 'clm' and est_issues and components_to_projects:
+            logger.info(f"Calculating CLM estimates from {len(est_issues)} EST issues")
+
+            # Используем указанное поле для Estimation man-days (cf[12307])
+            est_estimation_field = 'customfield_12307'
+            logger.info(f"Using specified EST estimation field: {est_estimation_field}")
+
+            # Выводим информацию о маппинге компонентов
+            logger.info("DEBUG: Component to project mapping: ")
+            for component, projects in components_to_projects.items():
+                if projects:  # только показываем компоненты, для которых есть проекты
+                    logger.info(f"DEBUG: Component {component} maps to projects: {projects}")
+
+            # Подробная информация о EST тикетах и их оценках
+            for i, issue in enumerate(est_issues):
+                issue_key = issue.get('key', 'unknown')
+                components_raw = issue.get('fields', {}).get('components', [])
+                components = [comp.get('name', '') for comp in components_raw if comp.get('name', '')]
+
+                # Получаем значение поля customfield_12307
+                estimation_raw = issue.get('fields', {}).get(est_estimation_field)
+                est_value = None
+
+                if estimation_raw is not None:
+                    try:
+                        est_value = float(estimation_raw)
+                    except (ValueError, TypeError):
+                        est_value = "Error: Non-numeric"
+
+                logger.info(
+                    f"DEBUG: EST issue #{i + 1}: {issue_key}, Components: {components}, Raw estimation: {estimation_raw}, Parsed: {est_value}")
+
+            # Обработка каждого EST тикета
+            for issue in est_issues:
+                issue_key = issue.get('key', 'unknown')
+                # Получаем компоненты задачи
+                components = []
+                for comp in issue.get('fields', {}).get('components', []):
+                    comp_name = comp.get('name', '')
+                    if comp_name:
+                        components.append(comp_name)
+
+                # Получаем оценку в человекоднях
+                DEFAULT_MANDAYS = 3.0  # Значение по умолчанию для задач без оценки
+                estimation_days = issue.get('fields', {}).get(est_estimation_field)
+
+                # Если нет оценки в поле, используем значение по умолчанию
+                if estimation_days is None:
+                    estimation_days = DEFAULT_MANDAYS
+                    logger.info(f"EST issue {issue_key} has no estimation, using default {DEFAULT_MANDAYS} man-days")
+
+                try:
+                    # Преобразуем значение в число (если строка или сложный объект)
+                    if not isinstance(estimation_days, (int, float)):
+                        try:
+                            estimation_days = float(estimation_days)
+                        except (ValueError, TypeError):
+                            logger.warning(f"Cannot convert estimation value {estimation_days} to float, using default")
+                            estimation_days = DEFAULT_MANDAYS
+
+                    # Преобразуем человекодни в часы (1 человекодень = 8 часов)
+                    estimation_hours = estimation_days * 8.0
+
+                    # Для каждого компонента найдем связанные проекты
+                    mapped_projects = set()
+                    for component in components:
+                        component_projects = components_to_projects.get(component, [])
+                        if component_projects:
+                            mapped_projects.update(component_projects)
+                            logger.info(f"Mapped component {component} to projects: {component_projects}")
+
+                    # Распределяем оценку по проектам, если маппинг найден
+                    if mapped_projects:
+                        hours_per_project = estimation_hours / len(mapped_projects)
+                        logger.info(
+                            f"EST {issue_key}: Distributing {estimation_hours} hours across {len(mapped_projects)} projects: {mapped_projects}")
+
+                        for project in mapped_projects:
+                            if project in project_clm_estimates:
+                                project_clm_estimates[project] += hours_per_project
+                            else:
+                                project_clm_estimates[project] = hours_per_project
+
+                except Exception as e:
+                    logger.error(f"Error processing EST issue {issue_key}: {str(e)}", exc_info=True)
+
+            # Выводим итоговые оценки по проектам
+            if project_clm_estimates:
+                logger.info(f"Final CLM estimates by project: {project_clm_estimates}")
+            else:
+                logger.warning("No CLM estimates were calculated for any project")
+
         # Special chart 1: No transitions tasks data (переименован в "Открытые задачи со списаниями")
         no_transitions_tasks = df[df['no_transitions'] == True]
         no_transitions_by_project = {}
@@ -59,12 +183,20 @@ def prepare_chart_data(df, data_source='jira', use_filter=True, filter_id=None, 
             try:
                 no_transitions_by_project = no_transitions_tasks.groupby('project').size().to_dict()
                 logger.info(f"Prepared open tasks with worklogs data with {len(no_transitions_by_project)} projects")
+
+                # Store the open task issue keys by project
+                open_tasks_by_project = {}
+                for project in no_transitions_by_project.keys():
+                    project_open_tasks = no_transitions_tasks[no_transitions_tasks['project'] == project]
+                    open_tasks_by_project[project] = project_open_tasks['issue_key'].tolist()
             except Exception as e:
                 logger.error(f"Error preparing open tasks with worklogs data: {str(e)}")
                 # Provide an empty dict in case of error
                 no_transitions_by_project = {}
+                open_tasks_by_project = {}
         else:
             logger.info("Open tasks with worklogs dataset is empty")
+            open_tasks_by_project = {}
 
         # Make sure we handle empty DataFrames gracefully
         no_transitions_count = len(no_transitions_tasks) if 'no_transitions_tasks' in locals() else 0
@@ -74,6 +206,7 @@ def prepare_chart_data(df, data_source='jira', use_filter=True, filter_id=None, 
             'project_counts': project_counts,
             'project_estimates': project_estimates,
             'project_time_spent': project_time_spent,
+            'project_clm_estimates': project_clm_estimates,  # Добавляем CLM оценки
             'projects': all_projects,
             'data_source': data_source,
             'filter_params': {
@@ -89,14 +222,31 @@ def prepare_chart_data(df, data_source='jira', use_filter=True, filter_id=None, 
                 'no_transitions': {
                     'title': 'Открытые задачи со списаниями',
                     'by_project': no_transitions_by_project,
-                    'total': no_transitions_count
+                    'total': no_transitions_count,
+                    'issue_keys_by_project': open_tasks_by_project if 'open_tasks_by_project' in locals() else {}
                 }
-            }
+            },
+            # Add project to issue mapping for precise JQL generation
+            'project_issue_mapping': project_issue_mapping
         }
 
         # Add CLM specific data if available
         if data_source == 'clm' and clm_metrics:
             chart_data['clm_metrics'] = clm_metrics
+
+            # Add specific issue key collections if they exist
+            if clm_issues:
+                chart_data['clm_issue_keys'] = [issue.get('key') for issue in clm_issues if issue.get('key')]
+            if est_issues:
+                chart_data['est_issue_keys'] = [issue.get('key') for issue in est_issues if issue.get('key')]
+            if improvement_issues:
+                chart_data['improvement_issue_keys'] = [issue.get('key') for issue in improvement_issues if
+                                                        issue.get('key')]
+            if implementation_issues:
+                chart_data['implementation_issue_keys'] = [issue.get('key') for issue in implementation_issues if
+                                                           issue.get('key')]
+            if filtered_issues:
+                chart_data['filtered_issue_keys'] = [issue.get('key') for issue in filtered_issues if issue.get('key')]
 
         logger.info("Chart data preparation complete")
         return chart_data
@@ -238,6 +388,9 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
                         project_implementation_mapping[project_key] = []
                     project_implementation_mapping[project_key].append(issue_key)
 
+            # Extract all implementation issue keys for JQL
+            implementation_keys = [issue.get('key') for issue in implementation_issues if issue.get('key')]
+
             # Filter by dates if specified
             if date_from or date_to:
                 date_conditions = []
@@ -251,37 +404,61 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
                 # Get issues with worklog for the specified period across ALL implementation projects
                 analysis_state['status_message'] = f'Filtering issues by worklog date: {date_query}'
 
-                # For each project, get tasks with worklog in the specified period
+                # Разбиваем implementation_issues на пакеты для более точного поиска
                 filtered_issues = []
                 total_issues_count = 0
+                batch_size = 50
 
-                for project in implementation_projects:
-                    project_query = f'project = "{project}" AND ({date_query})'
-                    project_issues = analyzer.get_issues_by_filter(jql_query=project_query)
-                    filtered_issues.extend(project_issues)
+                if implementation_keys:
+                    # Делаем фильтрацию на основе ключей задач, а не только по проектам
+                    # Это обеспечит, что мы получим только тикеты связанные с нашими CLM и их сабтаски
+                    for i in range(0, len(implementation_keys), batch_size):
+                        batch = implementation_keys[i:i + batch_size]
 
-                    total_issues_count += len(project_issues)
-                    analysis_state[
-                        'status_message'] = f'Processed {len(implementation_projects)} projects, found {total_issues_count} issues with worklogs'
+                        # Используем key IN для точного соответствия только нужным задачам
+                        keys_condition = f'key in ({", ".join(batch)})'
+                        batch_query = f'({keys_condition}) AND ({date_query})'
+
+                        logger.info(f"Fetching filtered batch {i // batch_size + 1} with query: {batch_query}")
+                        batch_issues = analyzer.get_issues_by_filter(jql_query=batch_query)
+                        filtered_issues.extend(batch_issues)
+
+                        total_issues_count += len(batch_issues)
+                        analysis_state['progress'] = 30 + int((i + batch_size) / len(implementation_keys) * 10)
+                        analysis_state[
+                            'status_message'] = f'Filtered {i + min(batch_size, len(implementation_keys) - i)}/{len(implementation_keys)} implementation issues, found {total_issues_count} issues with worklogs'
+                else:
+                    # Если по какой-то причине implementation_keys пустой, используем поиск по проектам
+                    logger.warning(
+                        "No implementation issue keys found, falling back to project-based filtering")
+                    for project in implementation_projects:
+                        project_query = f'project = "{project}" AND ({date_query})'
+                        project_issues = analyzer.get_issues_by_filter(jql_query=project_query)
+                        filtered_issues.extend(project_issues)
+
+                        total_issues_count += len(project_issues)
+                        analysis_state[
+                            'status_message'] = f'Processed {len(implementation_projects)} projects, found {total_issues_count} issues with worklogs'
 
                 # Use the final filtered issues
                 issues = filtered_issues
-
-                # Если есть фильтрация по датам, составляем отдельную карту для filtered_issues
-                for issue in filtered_issues:
-                    issue_key = issue.get('key')
-                    project_key = issue.get('fields', {}).get('project', {}).get('key', '')
-
-                    if issue_key and project_key:
-                        if project_key not in project_issue_mapping:
-                            project_issue_mapping[project_key] = []
-                        project_issue_mapping[project_key].append(issue_key)
             else:
                 # Use all issues without date filtering
                 issues = implementation_issues
                 filtered_issues = implementation_issues
-                # Без фильтрации используем карту implementation_issues
-                project_issue_mapping = project_implementation_mapping
+
+            # Выводим информацию о количестве задач, включая сабтаски
+            issue_types = {}
+            for issue in issues:
+                issue_type = issue.get('fields', {}).get('issuetype', {}).get('name', 'Unknown')
+                if issue_type in issue_types:
+                    issue_types[issue_type] += 1
+                else:
+                    issue_types[issue_type] = 1
+
+            logger.info(f"Issue type distribution in final issues: {issue_types}")
+            subtask_count = issue_types.get('Sub-task', 0) + issue_types.get('Subtask', 0)
+            logger.info(f"Total subtasks included: {subtask_count}")
 
             # Получить только open задачи
             open_tasks_issue_keys = []
@@ -315,8 +492,20 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
             with open(clm_keys_path, 'w', encoding='utf-8') as f:
                 json.dump(clm_keys_data, f, indent=4, ensure_ascii=False)
 
-            # Prepare CLM metrics
-            components_to_projects = map_components_to_projects(est_issues, implementation_issues)
+            # Объединяем все связанные задачи для поиска Documentation задач
+            all_related_issues = []
+            if clm_issues:
+                all_related_issues.extend(clm_issues)
+            if est_issues:
+                all_related_issues.extend(est_issues)
+            if improvement_issues:
+                all_related_issues.extend(improvement_issues)
+            if implementation_issues:
+                all_related_issues.extend(implementation_issues)
+            if filtered_issues:
+                all_related_issues.extend(filtered_issues)
+
+            components_to_projects = map_components_to_projects(est_issues, implementation_issues, all_related_issues)
 
             clm_metrics = {
                 'clm_issues_count': clm_count,
@@ -545,7 +734,7 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
         analysis_state['status_message'] = 'Creating interactive charts...'
         analysis_state['progress'] = 80
 
-        # Use the prepare_chart_data function instead of inline code
+        # Use the prepare_chart_data function with components to projects mapping
         chart_data = prepare_chart_data(
             df,
             data_source=data_source,
@@ -556,7 +745,13 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
             date_to=date_to,
             clm_filter_id=clm_filter_id,
             clm_jql_query=clm_jql_query,
-            clm_metrics=clm_metrics
+            clm_metrics=clm_metrics,
+            clm_issues=clm_issues,
+            est_issues=est_issues,
+            improvement_issues=improvement_issues,
+            implementation_issues=implementation_issues,
+            filtered_issues=filtered_issues,
+            components_to_projects=components_to_projects
         )
 
         chart_data_path = os.path.join(data_dir, 'chart_data.json')
@@ -650,17 +845,24 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
         analysis_state['is_running'] = False
 
 
-def map_components_to_projects(est_issues, implementation_issues):
+def map_components_to_projects(est_issues, implementation_issues, all_related_issues=None):
     """
     Create mapping between EST components and implementation project keys
+    with special exception rules for specific components.
+    Logic: First try to find matches via parsing, if that fails, use exceptions.
+    For DOC component, find all Documentation type issues in related issues.
 
     Args:
         est_issues (list): List of EST issue dictionaries
         implementation_issues (list): List of implementation issue dictionaries
+        all_related_issues (list, optional): All issues related to CLM for DOC component mapping
 
     Returns:
         dict: Mapping from components to projects
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     # Extract all component names from EST issues
     components = set()
     for issue in est_issues:
@@ -677,9 +879,94 @@ def map_components_to_projects(est_issues, implementation_issues):
         if project_key:
             projects.add(project_key)
 
-    # Create mapping based on substring matching
+    # Special exceptions for specific component mappings
+    special_mappings = {
+        # Базовые правила
+        'UNIGUI': ['NBSSPORTAL'],
+        'PRAIM_INV': ['CHM'],
+        'PRAIM': ['CHM'],
+        'NBSS': ['NBSSPORTAL', 'NUS'],
+        'NUS': ['NBSSPORTAL', 'NUS'],
+        'UDB_INV': ['UDB', 'ATS', 'SSO'],
+        'UDB': ['UDB', 'ATS', 'SSO'],
+
+        # Новые исключения
+        'BILLING': ['TUDBRES', 'BFAM', 'UDB'],
+        'BIN': ['SAM', 'EPM', 'MBUS', 'TOMCAT'],
+        'CAM+CPM+CIA': ['TLRDAPIMF', 'MCCA'],
+        'CBDDevOps': ['UFMNX', 'LCM', 'DMS'],
+        'CBSS_BIS': ['FIM', 'COMMON'],
+        'CBSS_M2M': ['TLRKCELL', 'UZTK', 'IOTCMPRTK', 'IOTCMP', 'KYRGTLCM', 'TME', 'UCELL1'],
+        'CBSS_PAYS': ['RIM', 'CDRSERVER'],
+        'CCM': ['TLRDAPIMF'],
+        'CNC': ['RE', 'ODPS', 'DGS', 'CDM'],
+        'CompoziteYota': ['BPMY'],
+        'CSI': ['ELASTICSCH'],
+        'DGS_INV': ['PASS'],
+        'INQ': ['WPSEC', 'ELASTICSCH', 'KAFKA', 'OSAMEGAFON'],
+        'INT+BIS': ['PSCCFGMF', 'OPENAPIESB', 'TLROSAMF', 'ESIMMNG', 'REFDATA', 'FASOL', 'RDMF', 'TLRDAPIMF', 'TMFPCS'],
+        'ISL_RSS': ['PRMCLSCHGT', 'PRMCL', 'PRMTELE2'],
+        'LCCM+LIS': ['SORM', 'TLRDAPIMF', 'CRMDCS'],
+        'M2M': ['IOTCMPGF'],
+        'MFACTORY_APIRATION': ['BSP'],
+        'MFACTORY_ARTCODE': ['BSP'],
+        'MFACTORY_FASTDEV': ['BSP'],
+        'MFACTORY_JSONBORN': ['BSP'],
+        'MFACTORY_ORANGE': ['BSP'],
+        'MFACTORY_PIEDPIPER': ['BSP'],
+        'MFACTORY_RAICOM': ['BSP'],
+        'MFACTORY_RAWDATA': ['BSP'],
+        'MFACTORY_STIG': ['BSP'],
+        'MFACTORY_WHITERABBIT': ['BSP'],
+        'MNP_FMC': ['CRMSOLMF'],
+        'MON': ['ELOG'],
+        'OAPI': ['SLSTNTMF', 'ZOOKEEPER', 'BSSPE', 'TMFPCS', 'OPENAPIESB', 'SLSTNT'],
+        'OMS': ['CRABMF'],
+        'ORION': ['CRABMFML', 'TMMF', 'MOPS', 'BSSORDER', 'PIC'],
+        'PAYS': ['SPP', 'UNIBLP', 'PPS', 'FPM'],
+        'Perforator': ['GFPERFTEST'],
+        'PSC': ['TRFMF'],
+        'SCC': ['B2BMFUI', 'BBDATAMART'],
+        'SSDEV': ['BSP', 'TLROSAMF'],
+        'SSO+NGINX': ['HEX', 'TNT', 'APIGW', 'APACHE', 'COUCHBASE', 'HAS', 'TNTMF', 'CLHS'],
+        'TDP': ['ODPS', 'CDM', 'RE', 'DGS', 'RS'],
+        'UFM+LCM': ['DMS'],
+        'RM_DELIVERY': ['TUDS'],
+        'RM_ARH': ['TUDS'],
+        'UFMDevOps': ['DMS']
+    }
+
+    # Create mapping based on substring matching and special rules
     mapping = {}
+
+    # Специальная обработка для компонента DOC - поиск тикетов типа Documentation
+    if 'DOC' in components and all_related_issues:
+        doc_projects = set()
+        for issue in all_related_issues:
+            # Проверяем тип задачи
+            issue_type = issue.get('fields', {}).get('issuetype', {}).get('name', '')
+            if issue_type == 'Documentation':
+                project_key = issue.get('fields', {}).get('project', {}).get('key', '')
+                if project_key:
+                    doc_projects.add(project_key)
+
+        if doc_projects:
+            # Добавляем найденные проекты для компонента DOC
+            doc_projects_list = list(doc_projects)
+            mapping['DOC'] = doc_projects_list
+            logger.info(f"Found Documentation issues in projects: {doc_projects_list} for DOC component")
+        else:
+            # Если документационных задач не найдено, используем пустой список
+            mapping['DOC'] = []
+            logger.info("No Documentation issues found for DOC component")
+
+    # Обработка остальных компонентов
     for component in components:
+        # Пропускаем DOC, если мы его уже обработали
+        if component == 'DOC' and component in mapping:
+            continue
+
+        # First attempt to find matches via parsing (substring matching)
         matched_projects = []
 
         # For each component, find projects with at least 3 matching characters
@@ -688,8 +975,22 @@ def map_components_to_projects(est_issues, implementation_issues):
                 if component[:3].lower() in project.lower() or project[:3].lower() in component.lower():
                     matched_projects.append(project)
 
+        # If parsing found matches, use them
         if matched_projects:
             mapping[component] = matched_projects
+            logger.info(f"Found match via parsing: Component '{component}' → {matched_projects}")
+        # Otherwise, check for exceptions
+        elif component in special_mappings:
+            predefined_projects = [proj for proj in special_mappings[component] if proj in projects]
+            if predefined_projects:
+                mapping[component] = predefined_projects
+                logger.info(f"Applied special mapping rule: Component '{component}' → {predefined_projects}")
+            else:
+                mapping[component] = []
+                logger.info(f"No valid projects found for component '{component}' in special mapping")
+        else:
+            mapping[component] = []
+            logger.info(f"No matches found for component '{component}'")
 
     # Count matches for logging
     match_count = sum(1 for comp in mapping if mapping[comp])
