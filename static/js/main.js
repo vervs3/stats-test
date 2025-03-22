@@ -110,20 +110,31 @@ document.addEventListener('DOMContentLoaded', function() {
             if (dateTo) params.append('date_to', dateTo);
             if (baseJql) params.append('base_jql', baseJql);
 
-            // Make request to server for JQL
-            fetch(`/jql/project/${project}?${params.toString()}`)
-                .then(response => response.json())
+            // Add logging to debug the issue
+            console.log(`Creating Jira link for project: ${project}`);
+
+            // Ensure proper URL encoding and make request to server for JQL
+            fetch(`/jql/project/${encodeURIComponent(project)}?${params.toString()}`)
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error(`Server returned ${response.status}: ${response.statusText}`);
+                    }
+                    return response.json();
+                })
                 .then(data => {
+                    console.log(`Received JQL: ${data.jql}`);
+
                     // Fill modal dialog
                     document.getElementById('jqlQuery').value = data.jql;
                     document.getElementById('openJiraBtn').href = data.url;
 
                     // Show modal dialog
+                    const bsJqlModal = new bootstrap.Modal(document.getElementById('jqlModal'));
                     bsJqlModal.show();
                 })
                 .catch(error => {
                     console.error('Error generating JQL:', error);
-                    alert('Error creating JQL query');
+                    alert('Error creating JQL query: ' + error.message);
                 });
         };
     }

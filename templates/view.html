@@ -95,6 +95,30 @@
                                             </th>
                                             <td>{{ data.summary.projects_count|default(0) }}</td>
                                         </tr>
+                                        {% if data.data_source == 'clm' and data.chart_data and data.chart_data.project_clm_estimates %}
+                                        <tr>
+                                            <th>
+                                                Общая оценка по CLM EST (часы):
+                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="Суммарная оценка времени из EST тикетов в часах">ⓘ</i>
+                                            </th>
+                                            <td>
+                                                <script>
+                                                    document.addEventListener('DOMContentLoaded', function() {
+                                                        try {
+                                                            const chartData = JSON.parse(document.getElementById('chart-data').textContent);
+                                                            if (chartData && chartData.project_clm_estimates) {
+                                                                const totalClmEst = Object.values(chartData.project_clm_estimates).reduce((sum, val) => sum + val, 0);
+                                                                document.getElementById('total-clm-est').textContent = totalClmEst.toFixed(2);
+                                                            }
+                                                        } catch (e) {
+                                                            console.error('Error calculating total CLM EST:', e);
+                                                        }
+                                                    });
+                                                </script>
+                                                <span id="total-clm-est">0.00</span>
+                                            </td>
+                                        </tr>
+                                        {% endif %}
                                         <tr>
                                             <th>
                                                 Общая исходная оценка (часы):
@@ -210,7 +234,6 @@
                             </div>
                         </div>
                         <div class="col-md-6">
-                            <h5>Компоненты и связанные проекты</h5>
                             {% if data.summary.components_mapping and data.summary.components_mapping|length > 0 %}
                                 <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
                                     <table class="table table-sm table-striped">
