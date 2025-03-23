@@ -1,14 +1,22 @@
 /**
  * Projects Pie Chart Module - Distribution of tasks by project
+ * With forced visual update on data change
  */
 import { getChartColors, createSpecialJQL } from './chart-utils.js';
 
 let pieChart = null;
+let currentProjectCounts = {}; // Store the current project counts
+let chartCanvas = null;
 
 // Initialize the projects pie chart
-export function initProjectsPieChart(chartData) {
-    const ctxProjectsPie = document.getElementById('projectsPieChart');
-    if (!ctxProjectsPie || !chartData.project_counts || Object.keys(chartData.project_counts).length === 0) {
+export function initProjectsPieChart(initialChartData) {
+    // Initialize current project counts
+    if (initialChartData && initialChartData.project_counts) {
+        currentProjectCounts = {...initialChartData.project_counts};
+    }
+
+    chartCanvas = document.getElementById('projectsPieChart');
+    if (!chartCanvas || !initialChartData.project_counts || Object.keys(initialChartData.project_counts).length === 0) {
         console.log("Projects pie chart not initialized - missing element or data");
         return { recreateChart: null };
     }
@@ -16,15 +24,34 @@ export function initProjectsPieChart(chartData) {
     console.log("Initializing projects pie chart");
 
     // Add period toggle for CLM mode
-    if (chartData.data_source === 'clm') {
-        setupPieChartToggle(ctxProjectsPie);
+    if (initialChartData.data_source === 'clm') {
+        setupPieChartToggle(chartCanvas);
     }
 
     // Function to explicitly recreate the pie chart with current data
-    function recreatePieChart() {
-        console.log("Explicitly recreating pie chart with current data");
+    function recreatePieChart(updatedChartData) {
+        console.log("FORCE RECREATING PIE CHART", updatedChartData ? "with new data" : "with current data");
 
-        // Always destroy the existing chart to prevent stale data
+        // Update current project counts if new data is provided
+        if (updatedChartData && updatedChartData.project_counts) {
+            console.log("PIE CHART: Updating with new project counts:", {
+                old_count: Object.keys(currentProjectCounts).length,
+                new_count: Object.keys(updatedChartData.project_counts).length,
+                old_total: Object.values(currentProjectCounts).reduce((a, b) => a + b, 0),
+                new_total: Object.values(updatedChartData.project_counts).reduce((a, b) => a + b, 0)
+            });
+
+            // Print first few old and new projects for comparison
+            const oldProjects = Object.entries(currentProjectCounts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+            const newProjects = Object.entries(updatedChartData.project_counts).sort((a, b) => b[1] - a[1]).slice(0, 3);
+            console.log("OLD TOP PROJECTS:", JSON.stringify(oldProjects));
+            console.log("NEW TOP PROJECTS:", JSON.stringify(newProjects));
+
+            // Completely replace the project counts
+            currentProjectCounts = {...updatedChartData.project_counts};
+        }
+
+        // Always destroy the existing chart
         if (pieChart) {
             console.log("Destroying existing pie chart");
             pieChart.destroy();
@@ -32,19 +59,32 @@ export function initProjectsPieChart(chartData) {
         }
 
         // Check that we have data to work with
-        if (!chartData || !chartData.project_counts || Object.keys(chartData.project_counts).length === 0) {
+        if (Object.keys(currentProjectCounts).length === 0) {
             console.warn("No project_counts data available for pie chart");
             return;
         }
 
-        console.log("Creating pie chart with data:", {
-            project_counts_length: Object.keys(chartData.project_counts).length,
-            sample: Object.entries(chartData.project_counts).slice(0, 3)
-        });
+        // FORCE RECREATE: Completely replace the canvas element
+        const parent = chartCanvas.parentNode;
+        const oldCanvas = chartCanvas;
+
+        // Create a new canvas with the same ID and class
+        const newCanvas = document.createElement('canvas');
+        newCanvas.id = oldCanvas.id;
+        newCanvas.className = oldCanvas.className;
+
+        // Replace the old canvas with the new one
+        parent.replaceChild(newCanvas, oldCanvas);
+
+        // Update the reference
+        chartCanvas = newCanvas;
 
         // Sort projects by count (descending)
-        const sortedProjects = Object.entries(chartData.project_counts)
+        const sortedProjects = Object.entries(currentProjectCounts)
             .sort((a, b) => b[1] - a[1]);
+
+        console.log(`PIE CHART: Creating with ${sortedProjects.length} projects, total count: ${
+            sortedProjects.reduce((sum, [_, count]) => sum + count, 0)}`);
 
         // Take top-20 projects, group the rest as "Others"
         const TOP_PROJECTS = 20;
@@ -62,15 +102,16 @@ export function initProjectsPieChart(chartData) {
             values.push(otherValue);
         }
 
+        // Calculate total for logging
+        const totalTasks = values.reduce((sum, val) => sum + val, 0);
+        console.log(`PIE CHART: Total tasks: ${totalTasks}, segments: ${values.length}`);
+        console.log(`PIE CHART: Values: ${JSON.stringify(values.slice(0, 5))}...`);
+
         // Create colors
         const pieColors = getChartColors(labels.length);
 
-        // Clear the canvas
-        const ctx = ctxProjectsPie.getContext('2d');
-        ctx.clearRect(0, 0, ctxProjectsPie.width, ctxProjectsPie.height);
-
         // Create new chart
-        pieChart = new Chart(ctx, {
+        pieChart = new Chart(chartCanvas.getContext('2d'), {
             type: 'pie',
             data: {
                 labels: labels,
@@ -112,7 +153,7 @@ export function initProjectsPieChart(chartData) {
                         if (project !== 'Другие') {
                             const isClmAnalysis = !!document.querySelector('[data-source="clm"]');
                             if (isClmAnalysis) {
-                                const withoutPeriod = document.getElementById('withoutPeriod')?.checked || false;
+                                const withoutPeriod = document.getElementById('pieWithoutPeriod')?.checked || false;
                                 createSpecialJQL(project, 'project_issues', withoutPeriod);
                             } else if (typeof createJiraLink === 'function') {
                                 createJiraLink(project);
@@ -125,12 +166,12 @@ export function initProjectsPieChart(chartData) {
             }
         });
 
-        console.log("Pie chart successfully recreated");
+        console.log("PIE CHART: Successfully recreated");
     }
 
     // Setup toggle UI for CLM mode
-    function setupPieChartToggle(ctxProjectsPie) {
-        const chartContainer = ctxProjectsPie.closest('.chart-container');
+    function setupPieChartToggle(chartCanvas) {
+        const chartContainer = chartCanvas.closest('.chart-container');
         if (chartContainer) {
             const periodToggleDiv = document.createElement('div');
             periodToggleDiv.className = 'period-toggle-container pie-period-toggle-container mb-3';
@@ -165,7 +206,7 @@ export function initProjectsPieChart(chartData) {
         }
 
         // Add indicator to chart header
-        const chartCard = ctxProjectsPie.closest('.card');
+        const chartCard = chartCanvas.closest('.card');
         if (chartCard) {
             const cardHeader = chartCard.querySelector('.card-header');
             if (cardHeader) {

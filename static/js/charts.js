@@ -6,6 +6,8 @@ import { initComparisonChart } from './comparison-chart.js';
 import { initProjectsPieChart } from './projects-pie-chart.js';
 import { initOpenTasksChart } from './open-tasks-chart.js';
 import { initClmSummaryChart } from './clm-summary-chart.js';
+import { updateSummaryStatistics } from './summary-updater.js';
+
 
 // Initialize charts when page loads
 document.addEventListener('DOMContentLoaded', function() {
@@ -14,6 +16,8 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!chartData) {
         return; // Exit if no data
     }
+
+    console.log("Charts initialization - Initial chart data loaded successfully");
 
     // Initialize chart modules
     const { updateChart, getFullProjectsList, updateFullProjectsList } = initComparisonChart(chartData) || {};
@@ -45,7 +49,16 @@ function setupPeriodToggles(chartData, callbacks) {
     periodRadios.forEach(radio => {
         radio.addEventListener('change', function() {
             const withoutPeriod = this.value === 'withoutPeriod';
+
+            console.log(`Main toggle changed to: ${withoutPeriod ? 'All CLM data' : 'Period data'}`);
             handlePeriodChange(withoutPeriod, chartData, callbacks);
+
+            // Ensure pie toggle is synchronized
+            const piePeriodToggle = document.getElementById(withoutPeriod ? 'pieWithoutPeriod' : 'pieWithPeriod');
+            if (piePeriodToggle && !piePeriodToggle.checked) {
+                console.log("Synchronizing pie toggle with main toggle");
+                piePeriodToggle.checked = true;
+            }
         });
     });
 
@@ -58,47 +71,17 @@ function setupPeriodToggles(chartData, callbacks) {
         radio.addEventListener('change', function() {
             const withoutPeriod = this.value === 'withoutPeriod';
 
+            console.log(`Pie toggle changed to: ${withoutPeriod ? 'All CLM data' : 'Period data'}`);
+
             // Sync the main toggle
             const mainPeriodToggle = document.getElementById(withoutPeriod ? 'withoutPeriod' : 'withPeriod');
             if (mainPeriodToggle && !mainPeriodToggle.checked) {
-                // Change main toggle programmatically
+                console.log("Synchronizing main toggle with pie toggle");
                 mainPeriodToggle.checked = true;
 
                 // Trigger the period change manually
                 handlePeriodChange(withoutPeriod, chartData, callbacks);
-            } else if (mainPeriodToggle && mainPeriodToggle.checked) {
-                // If toggles are already in sync, just update the pie chart
-                if (callbacks.recreatePieChart) {
-                    setTimeout(() => callbacks.recreatePieChart(), 300);
-                }
-
-                // Hide the pie loading indicator
-                const pieLoadingIndicator = document.getElementById('pie-period-loading');
-                if (pieLoadingIndicator) {
-                    pieLoadingIndicator.style.display = 'none';
-                }
             }
-        });
-    });
-
-    // Listen to changes on the main toggle to keep pie toggle in sync
-    periodRadios.forEach(radio => {
-        radio.addEventListener('change', function() {
-            const withoutPeriod = this.value === 'withoutPeriod';
-
-            // Sync the pie toggle
-            const piePeriodToggle = document.getElementById(withoutPeriod ? 'pieWithoutPeriod' : 'pieWithPeriod');
-            if (piePeriodToggle && !piePeriodToggle.checked) {
-                piePeriodToggle.checked = true;
-            }
-
-            // Hide the pie loading indicator after a delay
-            setTimeout(() => {
-                const pieLoadingIndicator = document.getElementById('pie-period-loading');
-                if (pieLoadingIndicator) {
-                    pieLoadingIndicator.style.display = 'none';
-                }
-            }, 500);
         });
     });
 }
@@ -108,15 +91,29 @@ function handlePeriodChange(withoutPeriod, chartData, callbacks) {
     const timestamp = document.querySelector('[data-timestamp]')?.getAttribute('data-timestamp') ||
                      window.location.pathname.split('/').pop();
 
+    console.log(`Handling period change to ${withoutPeriod ? 'All CLM data' : 'Period data'} mode`);
+
+    // Update indicators first
+    const dataModeIndicator = document.getElementById('data-mode-indicator');
+    if (dataModeIndicator) {
+        dataModeIndicator.textContent = withoutPeriod ? 'Все данные CLM' : 'Данные за период';
+    }
+    const pieIndicator = document.getElementById('pie-data-mode-indicator');
+    if (pieIndicator) {
+        pieIndicator.textContent = withoutPeriod ? 'Все данные CLM' : 'Данные за период';
+    }
+
     if (withoutPeriod && getIsInitialData()) {
+        console.log("Loading full CLM data...");
         // Load full CLM data
         loadFullClmData(chartData, timestamp, callbacks);
     } else if (!withoutPeriod && !getIsInitialData()) {
+        console.log("Restoring filtered data...");
         // Restore filtered data
         restoreFilteredData(chartData, callbacks);
     } else {
-        // No data change needed
-        console.log("No data change needed, already in the right mode.");
+        // No data change needed, just update the indicators
+        console.log("No data change needed, already in the right mode");
 
         // Hide loading indicators
         const mainLoadingIndicator = document.getElementById('period-loading');

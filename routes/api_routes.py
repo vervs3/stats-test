@@ -222,6 +222,9 @@ def register_api_routes(app):
                 'jql': ''
             }), 400
 
+        # Define CLM summary chart types where we should NOT add worklog filters
+        clm_summary_chart_types = ['clm_issues', 'est_issues', 'improvement_issues', 'linked_issues', 'filtered_issues']
+
         if is_clm and timestamp:
             # Get issue keys for this chart type from saved data
             issue_keys = get_issue_keys_for_clm_chart(timestamp, project, chart_type)
@@ -246,8 +249,8 @@ def register_api_routes(app):
 
                     logger.info(f"Created single-chunk JQL with {len(issue_keys)} issues")
 
-                # If not ignoring period, add date filters
-                if (date_from or date_to) and not ignore_period:
+                # If not ignoring period and not a CLM summary chart type, add date filters
+                if (date_from or date_to) and not ignore_period and chart_type not in clm_summary_chart_types:
                     date_parts = []
                     if date_from:
                         date_parts.append(f'worklogDate >= "{date_from}"')
@@ -257,6 +260,8 @@ def register_api_routes(app):
                     if date_parts:
                         jql = f'({jql}) AND ({" AND ".join(date_parts)})'
                         logger.info(f"Added date filters to JQL")
+                elif chart_type in clm_summary_chart_types:
+                    logger.info(f"Skipping date filters for CLM summary chart type: {chart_type}")
             else:
                 # If no issue keys found, use a fallback query
                 if chart_type == 'open_tasks':
@@ -277,8 +282,8 @@ def register_api_routes(app):
 
                 logger.info(f"No issue keys found, using fallback query: {jql}")
 
-                # Add date filters if specified and not ignoring period
-                if (date_from or date_to) and not ignore_period:
+                # Add date filters if specified and not ignoring period and not a CLM summary chart type
+                if (date_from or date_to) and not ignore_period and chart_type not in clm_summary_chart_types:
                     date_parts = []
                     if date_from:
                         date_parts.append(f'worklogDate >= "{date_from}"')
@@ -287,6 +292,8 @@ def register_api_routes(app):
 
                     if date_parts and jql:
                         jql += f' AND ({" AND ".join(date_parts)})'
+                elif chart_type in clm_summary_chart_types:
+                    logger.info(f"Skipping date filters for CLM summary chart type (fallback): {chart_type}")
 
                 # If still empty, use a default query
                 if not jql:
@@ -304,8 +311,8 @@ def register_api_routes(app):
                 conditions.append("status in (Open, \"NEW\")")
                 conditions.append("timespent > 0")
 
-            # Add time filters if specified and not ignoring period
-            if (date_from or date_to) and not ignore_period:
+            # Add time filters if specified and not ignoring period and not a CLM summary chart type
+            if (date_from or date_to) and not ignore_period and chart_type not in clm_summary_chart_types:
                 date_parts = []
                 if date_from:
                     date_parts.append(f"worklogDate >= \"{date_from}\"")
@@ -314,6 +321,8 @@ def register_api_routes(app):
 
                 if date_parts:
                     conditions.append(f"({' AND '.join(date_parts)})")
+            elif chart_type in clm_summary_chart_types:
+                logger.info(f"Skipping date filters for CLM summary chart type (standard mode): {chart_type}")
 
             # If there's a base JQL, add it as a separate condition
             if base_jql:
@@ -418,9 +427,17 @@ def register_api_routes(app):
                 all_project_estimates = df_all.groupby('project')['original_estimate_hours'].sum().to_dict()
                 all_project_time_spent = df_all.groupby('project')['time_spent_hours'].sum().to_dict()
 
+                # IMPORTANT: Calculate the project counts based on the actual implementation issues
+                all_project_counts = df_all['project'].value_counts().to_dict()
+
                 logger.info(f"Processed implementation issues dataframe with {len(df_all)} rows")
                 logger.info(
-                    f"Implementation data: {len(all_project_estimates)} projects with estimates, {len(all_project_time_spent)} projects with time spent")
+                    f"Implementation data: {len(all_project_estimates)} projects with estimates, {len(all_project_time_spent)} projects with time spent, {len(all_project_counts)} projects with counts")
+
+                # Log first 5 projects with highest counts
+                for i, (project, value) in enumerate(sorted(all_project_counts.items(), key=lambda x: -x[1])):
+                    if i >= 5: break
+                    logger.info(f"Project {project} implementation count: {value}")
 
                 # Log first 5 projects with highest estimates
                 for i, (project, value) in enumerate(sorted(all_project_estimates.items(), key=lambda x: -x[1])):
@@ -429,6 +446,7 @@ def register_api_routes(app):
             else:
                 all_project_estimates = {}
                 all_project_time_spent = {}
+                all_project_counts = {}
                 logger.warning("No implementation issues found")
 
             # Process filtered issues
@@ -437,9 +455,17 @@ def register_api_routes(app):
                 filtered_project_estimates = df_filtered.groupby('project')['original_estimate_hours'].sum().to_dict()
                 filtered_project_time_spent = df_filtered.groupby('project')['time_spent_hours'].sum().to_dict()
 
+                # Also calculate project counts for filtered data
+                filtered_project_counts = df_filtered['project'].value_counts().to_dict()
+
                 logger.info(f"Processed filtered issues dataframe with {len(df_filtered)} rows")
                 logger.info(
-                    f"Filtered data: {len(filtered_project_estimates)} projects with estimates, {len(filtered_project_time_spent)} projects with time spent")
+                    f"Filtered data: {len(filtered_project_estimates)} projects with estimates, {len(filtered_project_time_spent)} projects with time spent, {len(filtered_project_counts)} projects with counts")
+
+                # Log first 5 projects with highest counts in filtered data
+                for i, (project, value) in enumerate(sorted(filtered_project_counts.items(), key=lambda x: -x[1])):
+                    if i >= 5: break
+                    logger.info(f"Project {project} filtered count: {value}")
 
                 # Log first 5 projects with highest estimates
                 for i, (project, value) in enumerate(sorted(filtered_project_estimates.items(), key=lambda x: -x[1])):
@@ -449,16 +475,22 @@ def register_api_routes(app):
                 # Compare totals between implementation and filtered data
                 impl_total_est = sum(all_project_estimates.values())
                 impl_total_spent = sum(all_project_time_spent.values())
+                impl_total_count = sum(all_project_counts.values())
+
                 filtered_total_est = sum(filtered_project_estimates.values())
                 filtered_total_spent = sum(filtered_project_time_spent.values())
+                filtered_total_count = sum(filtered_project_counts.values())
 
-                logger.info(f"Implementation total: Estimate={impl_total_est}, Time Spent={impl_total_spent}")
-                logger.info(f"Filtered total: Estimate={filtered_total_est}, Time Spent={filtered_total_spent}")
                 logger.info(
-                    f"Difference: Estimate={impl_total_est - filtered_total_est}, Time Spent={impl_total_spent - filtered_total_spent}")
+                    f"Implementation total: Estimate={impl_total_est}, Time Spent={impl_total_spent}, Count={impl_total_count}")
+                logger.info(
+                    f"Filtered total: Estimate={filtered_total_est}, Time Spent={filtered_total_spent}, Count={filtered_total_count}")
+                logger.info(
+                    f"Difference: Estimate={impl_total_est - filtered_total_est}, Time Spent={impl_total_spent - filtered_total_spent}, Count={impl_total_count - filtered_total_count}")
             else:
                 filtered_project_estimates = {}
                 filtered_project_time_spent = {}
+                filtered_project_counts = {}
                 logger.warning("No filtered issues found")
 
             # Get CLM estimates
@@ -487,8 +519,10 @@ def register_api_routes(app):
             all_projects = set()
             all_projects.update(all_project_estimates.keys())
             all_projects.update(all_project_time_spent.keys())
+            all_projects.update(all_project_counts.keys())
             all_projects.update(filtered_project_estimates.keys())
             all_projects.update(filtered_project_time_spent.keys())
+            all_projects.update(filtered_project_counts.keys())
             all_projects.update(project_clm_estimates.keys())
 
             # Maintain order from existing projects list as much as possible
@@ -506,8 +540,10 @@ def register_api_routes(app):
                 'success': True,
                 'project_estimates': all_project_estimates,
                 'project_time_spent': all_project_time_spent,
+                'project_counts': all_project_counts,
                 'filtered_project_estimates': filtered_project_estimates,
                 'filtered_project_time_spent': filtered_project_time_spent,
+                'filtered_project_counts': filtered_project_counts,
                 'project_clm_estimates': project_clm_estimates,
                 'projects': ordered_projects,
                 'data_source': 'clm',
