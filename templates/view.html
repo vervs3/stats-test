@@ -330,6 +330,9 @@
                 <div class="card h-100">
                     <div class="card-header">
                         <h4>Распределение задач по проектам</h4>
+                        {% if data.data_source == 'clm' %}
+                            <span id="pie-data-mode-indicator" class="badge bg-info">Данные за период</span>
+                        {% endif %}
                     </div>
                     <div class="card-body">
                         <div class="mb-2 small text-muted">Нажмите на сегмент диаграммы, чтобы открыть соответствующие задачи в Jira</div>

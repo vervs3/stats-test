@@ -22,6 +22,131 @@ document.addEventListener('DOMContentLoaded', function() {
         // Initialize CLM summary chart if this is a CLM analysis
         initClmSummaryChart();
 
+        // Функция для принудительного обновления pie chart
+        function forcePieChartUpdate(chartData, pieChartInstance, ctxElement) {
+            console.log("Starting force update of pie chart");
+
+            // Проверяем, что у нас есть данные для обновления
+            if (!chartData || !chartData.project_counts || Object.keys(chartData.project_counts).length === 0) {
+                console.warn("No project_counts data available for pie chart update");
+                return null;
+            }
+
+            // Сортируем проекты по количеству задач (от большего к меньшему)
+            const sortedProjects = Object.entries(chartData.project_counts)
+                .sort((a, b) => b[1] - a[1]);
+
+            console.log("Sorted projects data for pie chart:",
+                sortedProjects.length,
+                "projects, first 3:",
+                sortedProjects.slice(0, 3));
+
+            // Возьмем топ-20 проектов
+            const TOP_PROJECTS = 20;
+            const topProjects = sortedProjects.slice(0, TOP_PROJECTS);
+            const otherProjects = sortedProjects.slice(TOP_PROJECTS);
+
+            // Создаем массивы для меток и значений
+            let labels = topProjects.map(item => item[0]);
+            let values = topProjects.map(item => item[1]);
+
+            // Если есть другие проекты, добавляем их как одну категорию
+            if (otherProjects.length > 0) {
+                const otherValue = otherProjects.reduce((sum, item) => sum + item[1], 0);
+                labels.push('Другие');
+                values.push(otherValue);
+            }
+
+            // Проверяем созданные данные
+            console.log("New pie chart data:", {
+                labels: labels,
+                values: values,
+                sum: values.reduce((acc, val) => acc + val, 0)
+            });
+
+            // Если существует chart объект, обновляем его данные
+            if (pieChartInstance) {
+                // Удаляем существующий график
+                pieChartInstance.destroy();
+            }
+
+            // Создаем цвета для графика
+            const pieColors = getChartColors(labels.length);
+
+            // Очищаем canvas
+            if (ctxElement) {
+                const ctx = ctxElement.getContext('2d');
+                ctx.clearRect(0, 0, ctxElement.width, ctxElement.height);
+
+                // Создаем новый график
+                const newPieChart = new Chart(ctx, {
+                    type: 'pie',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: values,
+                            backgroundColor: pieColors,
+                            borderColor: pieColors.map(color => color.replace('0.7', '1')),
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                position: 'right',
+                                labels: {
+                                    boxWidth: 15,
+                                    padding: 10
+                                }
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        const label = context.label || '';
+                                        const value = context.parsed || 0;
+                                        const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                        const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
+                                        return `${label}: ${value} задач (${percentage}%)`;
+                                    }
+                                }
+                            }
+                        },
+                        onClick: (event, activeElements) => {
+                            if (activeElements.length > 0) {
+                                const index = activeElements[0].index;
+                                const project = labels[index];
+
+                                // Не открываем Jira для категории "Другие"
+                                if (project !== 'Другие') {
+                                    // Use the same special JQL for CLM mode
+                                    const isClmAnalysis = !!document.querySelector('[data-source="clm"]');
+                                    if (isClmAnalysis) {
+                                        // For pie chart, respect the current period toggle if it exists
+                                        const withoutPeriod = document.getElementById('withoutPeriod')?.checked || false;
+                                        createSpecialJQL(project, 'project_issues', withoutPeriod);
+                                    } else {
+                                        // Для стандартных графиков используем обычную ссылку
+                                        if (typeof createJiraLink === 'function') {
+                                            createJiraLink(project);
+                                        }
+                                    }
+                                } else {
+                                    console.log("Clicked on 'Others' category - no action");
+                                }
+                            }
+                        }
+                    }
+                });
+
+                console.log("Created new pie chart with updated data");
+                return newPieChart;
+            }
+
+            return null;
+        }
+
         // Function to get colors for charts
         function getChartColors(count) {
             const colors = [];
@@ -181,6 +306,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     project_estimates: {},
                     project_time_spent: {},
                     project_clm_estimates: {},
+                    project_counts: {},
                     filtered_project_estimates: {},
                     filtered_project_time_spent: {},
                     projects: []
@@ -190,6 +316,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (chartData.data_source === 'clm') {
                     originalChartData.project_estimates = JSON.parse(JSON.stringify(chartData.project_estimates));
                     originalChartData.project_time_spent = JSON.parse(JSON.stringify(chartData.project_time_spent));
+                    originalChartData.project_counts = JSON.parse(JSON.stringify(chartData.project_counts));
 
                     if (chartData.project_clm_estimates) {
                         originalChartData.project_clm_estimates = JSON.parse(JSON.stringify(chartData.project_clm_estimates));
@@ -306,6 +433,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                         // ENHANCED: Store filtered data for later use
                                         originalChartData.project_estimates = JSON.parse(JSON.stringify(chartData.project_estimates));
                                         originalChartData.project_time_spent = JSON.parse(JSON.stringify(chartData.project_time_spent));
+                                        originalChartData.project_counts = JSON.parse(JSON.stringify(chartData.project_counts));
 
                                         // Save filtered data explicitly
                                         originalChartData.filtered_project_estimates = fullData.filtered_project_estimates || {};
@@ -347,6 +475,42 @@ document.addEventListener('DOMContentLoaded', function() {
                                             originalChartData.project_clm_estimates = JSON.parse(JSON.stringify(fullData.project_clm_estimates));
                                         }
 
+                                        // Также нужно создать новые данные для счетчиков проектов
+                                        // на основе полного набора реализационных задач
+                                        if (fullData.implementation_count > 0) {
+                                            // Создаем новые счетчики на основе реализационных задач
+                                            let newProjectCounts = {};
+
+                                            // Используем project_issue_mapping из chartData, если есть
+                                            if (chartData.project_issue_mapping) {
+                                                // Создаем счетчик на основе mapping
+                                                Object.keys(chartData.project_issue_mapping).forEach(project => {
+                                                    const count = chartData.project_issue_mapping[project].length;
+                                                    if (count > 0) {
+                                                        newProjectCounts[project] = count;
+                                                    }
+                                                });
+                                            } else {
+                                                // Просто копируем все данные из filtered_project_estimates в качестве приближения
+                                                newProjectCounts = Object.keys(fullData.project_estimates).reduce((acc, project) => {
+                                                    // Используем оценки как приближение к количеству задач
+                                                    if (fullData.project_estimates[project] > 0) {
+                                                        acc[project] = Math.max(1, Math.round(fullData.project_estimates[project] / 8)); // примерное число задач
+                                                    }
+                                                    return acc;
+                                                }, {});
+                                            }
+
+                                            // Сохраняем оригинальные счетчики для восстановления
+                                            originalChartData.project_counts_filtered = JSON.parse(JSON.stringify(chartData.project_counts));
+
+                                            // Обновляем счетчики
+                                            chartData.project_counts = newProjectCounts;
+                                            console.log("Updated project_counts for full data mode",
+                                                        Object.keys(newProjectCounts).length, "projects",
+                                                        "First 3 counts:", Object.entries(newProjectCounts).slice(0, 3));
+                                        }
+
                                         // Maintain the original project order as much as possible
                                         // First, get all unique projects from both datasets
                                         const newUniqueProjects = [...new Set([
@@ -380,6 +544,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
                                         // Обновляем график
                                         updateChart();
+
+                                        // Принудительно обновляем pie chart напрямую с новыми данными
+                                        console.log("Directly updating pie chart after data change");
+                                        if (typeof forcePieChartUpdate === 'function' && ctxProjectsPie) {
+                                            pieChart = forcePieChartUpdate(chartData, pieChart, ctxProjectsPie);
+                                        }
 
                                         console.log("Data updated to full implementation data:",
                                             Object.keys(chartData.project_estimates).length,
@@ -437,6 +607,16 @@ document.addEventListener('DOMContentLoaded', function() {
                                     chartData.project_clm_estimates = JSON.parse(JSON.stringify(originalChartData.project_clm_estimates));
                                 }
 
+                                // Также восстанавливаем оригинальные счетчики проектов
+                                if (originalChartData.project_counts_filtered) {
+                                    chartData.project_counts = JSON.parse(JSON.stringify(originalChartData.project_counts_filtered));
+                                    console.log("Restored original project counts for",
+                                                Object.keys(chartData.project_counts).length, "projects");
+                                } else if (originalChartData.project_counts) {
+                                    chartData.project_counts = JSON.parse(JSON.stringify(originalChartData.project_counts));
+                                    console.log("Restored fallback project counts");
+                                }
+
                                 // Restore the original project order if available
                                 if (originalChartData.projectOrder && originalChartData.projectOrder.length > 0) {
                                     console.log("Restoring original project order");
@@ -455,6 +635,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
                                 // Обновляем график
                                 updateChart();
+
+                                // Принудительно обновляем pie chart напрямую с восстановленными данными
+                                console.log("Directly updating pie chart after restoring data");
+                                if (typeof forcePieChartUpdate === 'function' && ctxProjectsPie) {
+                                    pieChart = forcePieChartUpdate(chartData, pieChart, ctxProjectsPie);
+                                }
 
                                 console.log("Data restored to filtered worklog data:",
                                     Object.keys(chartData.project_estimates).length,
@@ -795,90 +981,179 @@ document.addEventListener('DOMContentLoaded', function() {
 
         // Projects Pie Chart (переименованный в "Распределение задач по проектам")
         const ctxProjectsPie = document.getElementById('projectsPieChart');
+        let pieChart = null;
+
         if (ctxProjectsPie && chartData.project_counts && Object.keys(chartData.project_counts).length > 0) {
             console.log("Initializing projects pie chart");
 
-            // Сортируем проекты по количеству задач (от большего к меньшему)
-            const sortedProjects = Object.entries(chartData.project_counts)
-                .sort((a, b) => b[1] - a[1]);
+            // Function to update the pie chart based on current data
+            function updatePieChart() {
+                console.log("Updating pie chart with current data", {
+                    'project_counts_keys': Object.keys(chartData.project_counts).length,
+                    'sample_counts': Object.entries(chartData.project_counts).slice(0, 3)
+                });
 
-            // Возьмем топ-20 проектов, остальные объединим в "Другие" (увеличено с 10 до 20)
-            const TOP_PROJECTS = 20;
-            const topProjects = sortedProjects.slice(0, TOP_PROJECTS);
-            const otherProjects = sortedProjects.slice(TOP_PROJECTS);
+                // Add period toggle for the pie chart if in CLM mode (independent of the comparison chart)
+                if (chartData.data_source === 'clm' && !document.querySelector('.pie-period-toggle-container')) {
+                    const chartContainer = ctxProjectsPie.closest('.chart-container');
+                    if (chartContainer) {
+                        const periodToggleDiv = document.createElement('div');
+                        periodToggleDiv.className = 'period-toggle-container pie-period-toggle-container mb-3';
+                        periodToggleDiv.innerHTML = `
+                            <div class="alert alert-info py-2">
+                                <small>Режим отображения данных:</small>
+                                <div class="mt-1">
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="radio" name="piePeriodMode" id="pieWithPeriod" value="withPeriod" checked>
+                                        <label class="form-check-label" for="pieWithPeriod">
+                                            Данные за выбранный период
+                                        </label>
+                                    </div>
+                                    <div class="form-check form-check-inline">
+                                        <input class="form-check-input" type="radio" name="piePeriodMode" id="pieWithoutPeriod" value="withoutPeriod">
+                                        <label class="form-check-label" for="pieWithoutPeriod">
+                                            Все данные CLM
+                                        </label>
+                                    </div>
+                                </div>
+                                <div id="pie-period-loading" class="mt-2" style="display: none;">
+                                    <div class="spinner-border spinner-border-sm text-primary" role="status">
+                                        <span class="visually-hidden">Загрузка...</span>
+                                    </div>
+                                    <span class="ms-2">Загрузка данных...</span>
+                                </div>
+                            </div>
+                        `;
 
-            let labels = topProjects.map(item => item[0]);
-            let values = topProjects.map(item => item[1]);
+                        // Insert the toggle before the chart
+                        chartContainer.parentNode.insertBefore(periodToggleDiv, chartContainer);
 
-            // Если есть другие проекты, добавляем их как одну категорию
-            if (otherProjects.length > 0) {
-                const otherValue = otherProjects.reduce((sum, item) => sum + item[1], 0);
-                labels.push('Другие');
-                values.push(otherValue);
+                        // Add event listeners for the new toggle
+                        const piePeriodRadios = periodToggleDiv.querySelectorAll('input[name="piePeriodMode"]');
+                        piePeriodRadios.forEach(radio => {
+                            radio.addEventListener('change', function() {
+                                const withoutPeriod = this.value === 'withoutPeriod';
+
+                                // Update the pie indicator text
+                                const pieIndicator = document.getElementById('pie-data-mode-indicator');
+                                if (pieIndicator) {
+                                    pieIndicator.textContent = withoutPeriod ? 'Все данные CLM' : 'Данные за период';
+                                }
+
+                                // Show loading indicator
+                                const loadingIndicator = document.getElementById('pie-period-loading');
+                                if (loadingIndicator) {
+                                    loadingIndicator.style.display = 'block';
+                                }
+
+                                // Сохраняем ссылку на индикатор загрузки для использования позже
+                                window.piePeriodLoadingIndicator = loadingIndicator;
+
+                                // Synchronize with the main toggle to keep data consistent
+                                const mainPeriodToggle = document.getElementById(withoutPeriod ? 'withoutPeriod' : 'withPeriod');
+                                if (mainPeriodToggle && !mainPeriodToggle.checked) {
+                                    // Программно меняем главный переключатель
+                                    mainPeriodToggle.checked = true;
+
+                                    // Вызываем событие change вручную для главного переключателя
+                                    const event = new Event('change');
+                                    mainPeriodToggle.dispatchEvent(event);
+                                } else {
+                                    // Если переключатели уже синхронизированы, обновим диаграмму сами
+                                    // и скроем индикатор загрузки после небольшой задержки
+                                    setTimeout(() => {
+                                        updatePieChart();
+                                        if (loadingIndicator) {
+                                            loadingIndicator.style.display = 'none';
+                                        }
+                                    }, 300);
+                                }
+                            });
+                        });
+
+                        // Listen to changes on the main toggle to keep our toggle in sync
+                        const mainPeriodRadios = document.querySelectorAll('input[name="periodMode"]');
+                        mainPeriodRadios.forEach(radio => {
+                            radio.addEventListener('change', function() {
+                                const withoutPeriod = this.value === 'withoutPeriod';
+
+                                // Синхронизируем переключатель pie chart
+                                const piePeriodToggle = document.getElementById(withoutPeriod ? 'pieWithoutPeriod' : 'pieWithPeriod');
+                                if (piePeriodToggle && !piePeriodToggle.checked) {
+                                    piePeriodToggle.checked = true;
+                                }
+
+                                // Скрываем спиннер pie chart после небольшой задержки
+                                setTimeout(() => {
+                                    // Проверяем сохраненный индикатор
+                                    if (window.piePeriodLoadingIndicator) {
+                                        window.piePeriodLoadingIndicator.style.display = 'none';
+                                    }
+
+                                    // А также ищем его по ID (для надежности)
+                                    const pieLoadingIndicator = document.getElementById('pie-period-loading');
+                                    if (pieLoadingIndicator) {
+                                        pieLoadingIndicator.style.display = 'none';
+                                    }
+                                }, 500); // Увеличенная задержка для уверенности
+                            });
+                        });
+                    }
+                }
+
+                // Вызываем forcePieChartUpdate для создания или обновления диаграммы
+                console.log("Calling forcePieChartUpdate from updatePieChart");
+                pieChart = forcePieChartUpdate(chartData, pieChart, ctxProjectsPie);
             }
 
-            const pieColors = getChartColors(labels.length);
+            // Initial chart creation
+            updatePieChart();
 
-            try {
-                const pieChart = new Chart(ctxProjectsPie.getContext('2d'), {
-                    type: 'pie',
-                    data: {
-                        labels: labels,
-                        datasets: [{
-                            data: values,
-                            backgroundColor: pieColors,
-                            borderColor: pieColors.map(color => color.replace('0.7', '1')),
-                            borderWidth: 1
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: {
-                                position: 'right',
-                                labels: {
-                                    boxWidth: 15,
-                                    padding: 10
-                                }
-                            },
-                            tooltip: {
-                                callbacks: {
-                                    label: function(context) {
-                                        const label = context.label || '';
-                                        const value = context.parsed || 0;
-                                        const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                        const percentage = total > 0 ? Math.round((value / total) * 100) : 0;
-                                        return `${label}: ${value} задач (${percentage}%)`;
-                                    }
-                                }
-                            }
-                        },
-                        onClick: (event, activeElements) => {
-                            if (activeElements.length > 0) {
-                                const index = activeElements[0].index;
-                                const project = labels[index];
+            // Add period toggle indicator to the chart header if in CLM mode
+            if (chartData.data_source === 'clm') {
+                const chartCard = ctxProjectsPie.closest('.card');
+                if (chartCard) {
+                    const cardHeader = chartCard.querySelector('.card-header');
+                    if (cardHeader) {
+                        // Check if an indicator already exists
+                        if (!cardHeader.querySelector('#pie-data-mode-indicator')) {
+                            const indicator = document.createElement('span');
+                            indicator.id = 'pie-data-mode-indicator';
+                            indicator.className = 'badge bg-info';
+                            indicator.textContent = 'Данные за период';
 
-                                // Не открываем Jira для категории "Другие"
-                                if (project !== 'Другие') {
-                                    // Use the same special JQL for CLM mode
-                                    const isClmAnalysis = !!document.querySelector('[data-source="clm"]');
-                                    if (isClmAnalysis) {
-                                        // For pie chart, respect the current period toggle if it exists
-                                        const withoutPeriod = document.getElementById('withoutPeriod')?.checked || false;
-                                        createSpecialJQL(project, 'project_issues', withoutPeriod);
-                                    } else {
-                                        handleChartClick(event, 'pie', activeElements, pieChart);
-                                    }
-                                } else {
-                                    console.log("Clicked on 'Others' category - no action");
-                                }
-                            }
+                            // Create a container for the header title and indicator
+                            const headerContainer = document.createElement('div');
+                            headerContainer.className = 'd-flex justify-content-between align-items-center w-100';
+
+                            // Move existing content to the container
+                            const existingContent = cardHeader.innerHTML;
+                            headerContainer.innerHTML = `<h4>${existingContent}</h4>`;
+                            headerContainer.appendChild(indicator);
+
+                            // Clear card header and add the new container
+                            cardHeader.innerHTML = '';
+                            cardHeader.appendChild(headerContainer);
                         }
                     }
+                }
+
+                // Listen for changes on the period radio buttons (shared with comparison chart)
+                const periodRadios = document.querySelectorAll('input[name="periodMode"]');
+                periodRadios.forEach(radio => {
+                    radio.addEventListener('change', function() {
+                        // Update the pie chart indicator
+                        const pieIndicator = document.getElementById('pie-data-mode-indicator');
+                        if (pieIndicator) {
+                            pieIndicator.textContent = this.value === 'withoutPeriod' ? 'Все данные CLM' : 'Данные за период';
+                        }
+
+                        // When data changes in updateChart() for comparison chart,
+                        // we also need to update the pie chart with the new data
+                        // This will happen automatically when the data is fetched
+                        setTimeout(updatePieChart, 500);  // Small delay to ensure data is updated
+                    });
                 });
-            } catch (err) {
-                console.error("Error creating projects pie chart:", err);
             }
         } else {
             console.log("Projects pie chart not initialized - missing element or data");
