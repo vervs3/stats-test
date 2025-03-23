@@ -51,6 +51,8 @@ def register_api_routes(app):
             with open(clm_keys_path, 'r', encoding='utf-8') as f:
                 clm_data = json.load(f)
 
+                logger.info(f"Available key types in CLM data: {list(clm_data.keys())}")
+
                 # Get keys based on chart type
                 if chart_type == 'clm_issues':
                     keys = clm_data.get('clm_issue_keys', [])
@@ -80,13 +82,15 @@ def register_api_routes(app):
                     # Get all issues for this project
                     project_issues = clm_data.get('project_issue_mapping', {}).get(project, [])
                     # Filter the keys to only those in this project
-                    keys = [key for key in keys if key in project_issues]
+                    filtered_keys = [key for key in keys if key in project_issues]
+                    logger.info(f"Filtered from {len(keys)} to {len(filtered_keys)} keys for project {project}")
+                    keys = filtered_keys
 
                 logger.info(f"Found {len(keys)} issue keys for chart type {chart_type}, project {project}")
                 return keys
 
         except Exception as e:
-            logger.error(f"Error getting issue keys for CLM chart: {e}")
+            logger.error(f"Error getting issue keys for CLM chart: {e}", exc_info=True)
             return []
 
     @app.route('/jql/project/<project>')
@@ -110,24 +114,35 @@ def register_api_routes(app):
             logger.info(f"CLM mode: Found {len(issue_keys)} issue keys for project {project}")
 
             if issue_keys:
-                # Create JQL with issue keys
-                if len(issue_keys) > 100:
-                    # For many issues, use a simplified JQL
-                    jql = f'project = "{project}"'  # Ensure project is quoted
+                # ENHANCED: Always use issue in (...) format with chunking for large sets
+                chunk_size = 100  # Jira typically has limits on JQL length
 
-                    # Add date filters if specified
-                    if date_from or date_to:
-                        date_parts = []
-                        if date_from:
-                            date_parts.append(f'worklogDate >= "{date_from}"')
-                        if date_to:
-                            date_parts.append(f'worklogDate <= "{date_to}"')
+                if len(issue_keys) > chunk_size:
+                    # For many issues, split into chunks and join with OR
+                    logger.info(f"Chunking {len(issue_keys)} issue keys into groups of {chunk_size}")
+                    chunks = [issue_keys[i:i + chunk_size] for i in range(0, len(issue_keys), chunk_size)]
 
-                        if date_parts:
-                            jql += f' AND ({" AND ".join(date_parts)})'
+                    # Create a JQL with multiple "issue in (...)" clauses
+                    jql_parts = [f'issue in ({", ".join(chunk)})' for chunk in chunks]
+                    jql = ' OR '.join(jql_parts)
+
+                    logger.info(f"Created chunked JQL with {len(chunks)} chunks")
                 else:
-                    # For a reasonable number of issues, explicitly list them
+                    # For a reasonable number of issues, use a single clause
                     jql = f'issue in ({", ".join(issue_keys)})'
+
+                    logger.info(f"Created single-chunk JQL with {len(issue_keys)} issues")
+
+                # Add date filters if specified
+                if date_from or date_to:
+                    date_parts = []
+                    if date_from:
+                        date_parts.append(f'worklogDate >= "{date_from}"')
+                    if date_to:
+                        date_parts.append(f'worklogDate <= "{date_to}"')
+
+                    if date_parts:
+                        jql = f'({jql}) AND ({" AND ".join(date_parts)})'
             else:
                 # If no issue keys found, use a simple project filter
                 jql = f'project = "{project}"'  # Ensure project is quoted
@@ -212,49 +227,36 @@ def register_api_routes(app):
             issue_keys = get_issue_keys_for_clm_chart(timestamp, project, chart_type)
 
             if issue_keys:
-                # If we have a lot of issues, it's better to use a more general query
-                if len(issue_keys) > 100:
-                    # For many issues, use a simplified JQL
-                    if chart_type == 'open_tasks':
-                        jql = f'project = {project} AND status in (Open, "NEW") AND timespent > 0'
-                    elif chart_type == 'clm_issues':
-                        jql = 'project = CLM'
-                    elif chart_type == 'est_issues':
-                        jql = 'project = EST'
-                    elif chart_type == 'improvement_issues':
-                        jql = 'issuetype = "Improvement from CLM"'
-                    elif chart_type in ['linked_issues', 'filtered_issues', 'project_issues']:
-                        if project != 'all':
-                            jql = f'project = {project}'
-                        else:
-                            jql = 'project in ()'  # Add the relevant projects here
-                    else:
-                        jql = 'issue in ()'  # Fallback empty query
+                # ENHANCED: Always use issue in (...) format with chunking for large sets
+                chunk_size = 100  # Jira typically has limits on JQL length
 
-                    # Add date filters if specified and not ignoring period
-                    if (date_from or date_to) and not ignore_period:
-                        date_parts = []
-                        if date_from:
-                            date_parts.append(f'worklogDate >= "{date_from}"')
-                        if date_to:
-                            date_parts.append(f'worklogDate <= "{date_to}"')
+                if len(issue_keys) > chunk_size:
+                    # For many issues, split into chunks and join with OR
+                    logger.info(f"Chunking {len(issue_keys)} issue keys into groups of {chunk_size}")
+                    chunks = [issue_keys[i:i + chunk_size] for i in range(0, len(issue_keys), chunk_size)]
 
-                        if date_parts and jql != 'issue in ()':
-                            jql += f' AND ({" AND ".join(date_parts)})'
+                    # Create a JQL with multiple "issue in (...)" clauses
+                    jql_parts = [f'issue in ({", ".join(chunk)})' for chunk in chunks]
+                    jql = ' OR '.join(jql_parts)
+
+                    logger.info(f"Created chunked JQL with {len(chunks)} chunks")
                 else:
-                    # For a reasonable number of issues, explicitly list them
+                    # For a reasonable number of issues, use a single clause
                     jql = f'issue in ({", ".join(issue_keys)})'
 
-                    # If not ignoring period, add date filters
-                    if (date_from or date_to) and not ignore_period:
-                        date_parts = []
-                        if date_from:
-                            date_parts.append(f'worklogDate >= "{date_from}"')
-                        if date_to:
-                            date_parts.append(f'worklogDate <= "{date_to}"')
+                    logger.info(f"Created single-chunk JQL with {len(issue_keys)} issues")
 
-                        if date_parts:
-                            jql += f' AND ({" AND ".join(date_parts)})'
+                # If not ignoring period, add date filters
+                if (date_from or date_to) and not ignore_period:
+                    date_parts = []
+                    if date_from:
+                        date_parts.append(f'worklogDate >= "{date_from}"')
+                    if date_to:
+                        date_parts.append(f'worklogDate <= "{date_to}"')
+
+                    if date_parts:
+                        jql = f'({jql}) AND ({" AND ".join(date_parts)})'
+                        logger.info(f"Added date filters to JQL")
             else:
                 # If no issue keys found, use a fallback query
                 if chart_type == 'open_tasks':
@@ -272,6 +274,8 @@ def register_api_routes(app):
                         jql = ''  # Empty query as fallback
                 else:
                     jql = ''  # Empty query as fallback
+
+                logger.info(f"No issue keys found, using fallback query: {jql}")
 
                 # Add date filters if specified and not ignoring period
                 if (date_from or date_to) and not ignore_period:
@@ -337,6 +341,8 @@ def register_api_routes(app):
     def clm_chart_data(timestamp):
         """
         Get full chart data for CLM analysis without period filtering
+        Updated to work with the new raw_issues.json format that contains both
+        filtered and all implementation issues.
 
         Args:
             timestamp (str): Analysis timestamp folder
@@ -373,78 +379,140 @@ def register_api_routes(app):
             with open(clm_keys_path, 'r', encoding='utf-8') as f:
                 clm_keys_data = json.load(f)
 
-            # Загрузка сырых данных задач
-            with open(raw_issues_path, 'r', encoding='utf-8') as f:
-                raw_issues = json.load(f)
+            # Получаем ключи implementation issues и filtered issues
+            implementation_issue_keys = clm_keys_data.get('implementation_issue_keys', [])
+            filtered_issue_keys = clm_keys_data.get('filtered_issue_keys', [])
 
-            # Обрабатываем все задачи для получения полных данных
-            import pandas as pd
+            logger.info(f"Found {len(implementation_issue_keys)} implementation issue keys")
+            logger.info(f"Found {len(filtered_issue_keys)} filtered issue keys")
+
+            # Load raw issues with the new format (contains both filtered and all implementation issues)
+            with open(raw_issues_path, 'r', encoding='utf-8') as f:
+                raw_issues_data = json.load(f)
+
+            # Check if we have the new format
+            if isinstance(raw_issues_data,
+                          dict) and 'filtered_issues' in raw_issues_data and 'all_implementation_issues' in raw_issues_data:
+                # New format
+                logger.info("Found new raw_issues.json format with both filtered and implementation issues")
+                all_implementation_issues = raw_issues_data.get('all_implementation_issues', [])
+                filtered_issues = raw_issues_data.get('filtered_issues', [])
+
+                logger.info(
+                    f"Loaded {len(all_implementation_issues)} implementation issues and {len(filtered_issues)} filtered issues")
+            else:
+                # Old format (just an array of filtered issues)
+                logger.info("Found old raw_issues.json format, treating as filtered issues only")
+                filtered_issues = raw_issues_data if isinstance(raw_issues_data, list) else []
+
+                # Fall back to a copy of filtered issues for implementation issues
+                all_implementation_issues = filtered_issues.copy()
+
+                logger.info(f"Loaded {len(filtered_issues)} filtered issues, no separate implementation issues")
+
+            # Process implementation issues to get all data
             from modules.data_processor import process_issues_data
 
-            # Используем функцию process_issues_data для обработки данных
-            df = process_issues_data(raw_issues)
+            if all_implementation_issues:
+                df_all = process_issues_data(all_implementation_issues)
+                all_project_estimates = df_all.groupby('project')['original_estimate_hours'].sum().to_dict()
+                all_project_time_spent = df_all.groupby('project')['time_spent_hours'].sum().to_dict()
 
-            # Готовим данные для графика
-            project_estimates = df.groupby('project')['original_estimate_hours'].sum().to_dict()
-            project_time_spent = df.groupby('project')['time_spent_hours'].sum().to_dict()
+                logger.info(f"Processed implementation issues dataframe with {len(df_all)} rows")
+                logger.info(
+                    f"Implementation data: {len(all_project_estimates)} projects with estimates, {len(all_project_time_spent)} projects with time spent")
 
-            # Получаем проекты для EST задач и компонентов
+                # Log first 5 projects with highest estimates
+                for i, (project, value) in enumerate(sorted(all_project_estimates.items(), key=lambda x: -x[1])):
+                    if i >= 5: break
+                    logger.info(f"Project {project} implementation estimate: {value}")
+            else:
+                all_project_estimates = {}
+                all_project_time_spent = {}
+                logger.warning("No implementation issues found")
+
+            # Process filtered issues
+            if filtered_issues:
+                df_filtered = process_issues_data(filtered_issues)
+                filtered_project_estimates = df_filtered.groupby('project')['original_estimate_hours'].sum().to_dict()
+                filtered_project_time_spent = df_filtered.groupby('project')['time_spent_hours'].sum().to_dict()
+
+                logger.info(f"Processed filtered issues dataframe with {len(df_filtered)} rows")
+                logger.info(
+                    f"Filtered data: {len(filtered_project_estimates)} projects with estimates, {len(filtered_project_time_spent)} projects with time spent")
+
+                # Log first 5 projects with highest estimates
+                for i, (project, value) in enumerate(sorted(filtered_project_estimates.items(), key=lambda x: -x[1])):
+                    if i >= 5: break
+                    logger.info(f"Project {project} filtered estimate: {value}")
+
+                # Compare totals between implementation and filtered data
+                impl_total_est = sum(all_project_estimates.values())
+                impl_total_spent = sum(all_project_time_spent.values())
+                filtered_total_est = sum(filtered_project_estimates.values())
+                filtered_total_spent = sum(filtered_project_time_spent.values())
+
+                logger.info(f"Implementation total: Estimate={impl_total_est}, Time Spent={impl_total_spent}")
+                logger.info(f"Filtered total: Estimate={filtered_total_est}, Time Spent={filtered_total_spent}")
+                logger.info(
+                    f"Difference: Estimate={impl_total_est - filtered_total_est}, Time Spent={impl_total_spent - filtered_total_spent}")
+            else:
+                filtered_project_estimates = {}
+                filtered_project_time_spent = {}
+                logger.warning("No filtered issues found")
+
+            # Get CLM estimates
             project_clm_estimates = {}
-            est_issue_keys = clm_keys_data.get('est_issue_keys', [])
-            implementation_issue_keys = clm_keys_data.get('implementation_issue_keys', [])
-            components_to_projects = {}
 
-            # Попробуем загрузить компоненты из summary.json
-            summary_path = os.path.join(folder_path, 'summary.json')
-            if os.path.exists(summary_path):
-                try:
-                    with open(summary_path, 'r', encoding='utf-8') as f:
-                        summary_data = json.load(f)
-                        components_to_projects = summary_data.get('components_mapping', {})
-                except Exception as e:
-                    logger.error(f"Error reading summary for components mapping: {e}")
-
-            # Если не нашли компоненты, попробуем загрузить из metrics
-            if not components_to_projects:
-                clm_metrics_path = os.path.join(folder_path, 'metrics', 'clm_metrics.json')
-                if os.path.exists(clm_metrics_path):
-                    try:
-                        with open(clm_metrics_path, 'r', encoding='utf-8') as f:
-                            clm_metrics = json.load(f)
-                            components_to_projects = clm_metrics.get('components_mapping', {})
-                    except Exception as e:
-                        logger.error(f"Error reading CLM metrics for components mapping: {e}")
-
-            # Если все еще нет компонентов, используем пустой словарь
-            if not components_to_projects:
-                components_to_projects = {}
-
-            # Подгрузим chart_data.json для получения дополнительной информации
+            # Load chart data for CLM estimates and original project order
             chart_data_path = os.path.join(folder_path, 'data', 'chart_data.json')
+            existing_projects = []
+
             if os.path.exists(chart_data_path):
                 try:
                     with open(chart_data_path, 'r', encoding='utf-8') as f:
                         chart_data = json.load(f)
-                        # Используем имеющиеся данные CLM оценок, если они есть
+
+                        # Get CLM estimates
                         if 'project_clm_estimates' in chart_data:
                             project_clm_estimates = chart_data['project_clm_estimates']
+
+                        # Get original project order
+                        if 'projects' in chart_data:
+                            existing_projects = chart_data['projects']
                 except Exception as e:
                     logger.error(f"Error reading chart data: {e}")
 
-            # Соберем полный набор проектов
+            # Combine all projects
             all_projects = set()
-            all_projects.update(project_estimates.keys())
-            all_projects.update(project_time_spent.keys())
+            all_projects.update(all_project_estimates.keys())
+            all_projects.update(all_project_time_spent.keys())
+            all_projects.update(filtered_project_estimates.keys())
+            all_projects.update(filtered_project_time_spent.keys())
             all_projects.update(project_clm_estimates.keys())
 
-            # Результат
+            # Maintain order from existing projects list as much as possible
+            ordered_projects = []
+            for project in existing_projects:
+                if project in all_projects:
+                    ordered_projects.append(project)
+                    all_projects.remove(project)
+
+            # Add any remaining projects
+            ordered_projects.extend(sorted(all_projects))
+
+            # Result
             result = {
                 'success': True,
-                'project_estimates': project_estimates,
-                'project_time_spent': project_time_spent,
+                'project_estimates': all_project_estimates,
+                'project_time_spent': all_project_time_spent,
+                'filtered_project_estimates': filtered_project_estimates,
+                'filtered_project_time_spent': filtered_project_time_spent,
                 'project_clm_estimates': project_clm_estimates,
-                'projects': list(all_projects),
-                'data_source': 'clm'
+                'projects': ordered_projects,
+                'data_source': 'clm',
+                'implementation_count': len(all_implementation_issues),
+                'filtered_count': len(filtered_issues)
             }
 
             return jsonify(result)

@@ -378,17 +378,23 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
             project_issue_mapping = {}
             project_implementation_mapping = {}
 
-            # Составляем карту проектов и их задач из implementation_issues
+            # Extract issue keys by project
+            project_issue_mapping = {}
             for issue in implementation_issues:
                 issue_key = issue.get('key')
                 project_key = issue.get('fields', {}).get('project', {}).get('key', '')
-
                 if issue_key and project_key:
-                    if project_key not in project_implementation_mapping:
-                        project_implementation_mapping[project_key] = []
-                    project_implementation_mapping[project_key].append(issue_key)
+                    if project_key not in project_issue_mapping:
+                        project_issue_mapping[project_key] = []
+                    project_issue_mapping[project_key].append(issue_key)
 
-            # Extract all implementation issue keys for JQL
+            # Store ALL implementation issues in raw_issues_all.json for later use
+            raw_issues_all_path = os.path.join(output_dir, 'raw_issues_all.json')
+            with open(raw_issues_all_path, 'w', encoding='utf-8') as f:
+                json.dump(implementation_issues, f, indent=2, ensure_ascii=False)
+            logger.info(f"Saved all {len(implementation_issues)} implementation issues to {raw_issues_all_path}")
+
+            # Get implementation issue keys
             implementation_keys = [issue.get('key') for issue in implementation_issues if issue.get('key')]
 
             # Filter by dates if specified
@@ -404,7 +410,7 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
                 # Get issues with worklog for the specified period across ALL implementation projects
                 analysis_state['status_message'] = f'Filtering issues by worklog date: {date_query}'
 
-                # Разбиваем implementation_issues на пакеты для более точного поиска
+                # For each project, get tasks with worklog in the specified period
                 filtered_issues = []
                 total_issues_count = 0
                 batch_size = 50
@@ -440,72 +446,66 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
                         analysis_state[
                             'status_message'] = f'Processed {len(implementation_projects)} projects, found {total_issues_count} issues with worklogs'
 
-                # Use the final filtered issues
+                # MODIFIED: Save both filtered and all implementation issues in raw_issues.json
+                # Combine both filtered issues and implementation issues into a single structure
+                combined_issues = {
+                    "filtered_issues": filtered_issues,
+                    "all_implementation_issues": implementation_issues
+                }
+
+                raw_issues_path = os.path.join(output_dir, 'raw_issues.json')
+                with open(raw_issues_path, 'w', encoding='utf-8') as f:
+                    json.dump(combined_issues, f, indent=2, ensure_ascii=False)
+                logger.info(
+                    f"Saved combined issues data with {len(filtered_issues)} filtered issues and {len(implementation_issues)} total implementation issues to {raw_issues_path}")
+
+                # Use the filtered issues for the current analysis
                 issues = filtered_issues
             else:
                 # Use all issues without date filtering
                 issues = implementation_issues
+
+                # In this case, filtered_issues and implementation_issues are identical
+                # Still use the combined structure for consistency
+                combined_issues = {
+                    "filtered_issues": implementation_issues,
+                    "all_implementation_issues": implementation_issues
+                }
+
+                raw_issues_path = os.path.join(output_dir, 'raw_issues.json')
+                with open(raw_issues_path, 'w', encoding='utf-8') as f:
+                    json.dump(combined_issues, f, indent=2, ensure_ascii=False)
+                logger.info(f"Saved combined issues data with {len(implementation_issues)} issues to {raw_issues_path}")
+
                 filtered_issues = implementation_issues
 
-            # Выводим информацию о количестве задач, включая сабтаски
-            issue_types = {}
-            for issue in issues:
-                issue_type = issue.get('fields', {}).get('issuetype', {}).get('name', 'Unknown')
-                if issue_type in issue_types:
-                    issue_types[issue_type] += 1
-                else:
-                    issue_types[issue_type] = 1
-
-            logger.info(f"Issue type distribution in final issues: {issue_types}")
-            subtask_count = issue_types.get('Sub-task', 0) + issue_types.get('Subtask', 0)
-            logger.info(f"Total subtasks included: {subtask_count}")
-
-            # Получить только open задачи
-            open_tasks_issue_keys = []
-            for issue in filtered_issues:
-                # Проверка статуса (используем непосредственно поле status вместо анализа transitions)
-                status = issue.get('fields', {}).get('status', {}).get('name', '')
-                time_spent = issue.get('fields', {}).get('timespent', 0) or 0
-
-                if status in ['Open', 'NEW'] and time_spent > 0:
-                    open_tasks_issue_keys.append(issue.get('key'))
-
-            # Сохранение ключей задач для использования в JQL-запросах
+            # Also save issue keys for later JQL generation
             clm_issue_keys = [issue.get('key') for issue in clm_issues if issue.get('key')]
             est_issue_keys = [issue.get('key') for issue in est_issues if issue.get('key')]
             improvement_issue_keys = [issue.get('key') for issue in improvement_issues if issue.get('key')]
             implementation_issue_keys = [issue.get('key') for issue in implementation_issues if issue.get('key')]
             filtered_issue_keys = [issue.get('key') for issue in filtered_issues if issue.get('key')]
 
+            # Also extract open tasks with time spent
+            open_tasks_issue_keys = []
+
+            # Save all issue keys to a file
             clm_keys_data = {
                 'clm_issue_keys': clm_issue_keys,
                 'est_issue_keys': est_issue_keys,
                 'improvement_issue_keys': improvement_issue_keys,
                 'implementation_issue_keys': implementation_issue_keys,
                 'filtered_issue_keys': filtered_issue_keys,
-                'open_tasks_issue_keys': open_tasks_issue_keys,
-                'project_issue_mapping': project_issue_mapping,
-                'project_implementation_mapping': project_implementation_mapping
+                'open_tasks_issue_keys': open_tasks_issue_keys,  # Will be populated later if needed
+                'project_issue_mapping': project_issue_mapping
             }
 
             clm_keys_path = os.path.join(data_dir, 'clm_issue_keys.json')
             with open(clm_keys_path, 'w', encoding='utf-8') as f:
                 json.dump(clm_keys_data, f, indent=4, ensure_ascii=False)
 
-            # Объединяем все связанные задачи для поиска Documentation задач
-            all_related_issues = []
-            if clm_issues:
-                all_related_issues.extend(clm_issues)
-            if est_issues:
-                all_related_issues.extend(est_issues)
-            if improvement_issues:
-                all_related_issues.extend(improvement_issues)
-            if implementation_issues:
-                all_related_issues.extend(implementation_issues)
-            if filtered_issues:
-                all_related_issues.extend(filtered_issues)
-
-            components_to_projects = map_components_to_projects(est_issues, implementation_issues, all_related_issues)
+            # Prepare CLM metrics
+            components_to_projects = map_components_to_projects(est_issues, implementation_issues)
 
             clm_metrics = {
                 'clm_issues_count': clm_count,
@@ -669,28 +669,19 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
                 except Exception as e:
                     logger.error(f"Error updating CLM keys data with open tasks: {e}")
 
-            # Also update project-to-issues mapping from the processed data
-            project_to_issues = {}
-            for _, row in df.iterrows():
-                project = row['project']
-                issue_key = row['issue_key']
+                    # Обновление проектов и их задач для более точного фильтрования
+                    project_issue_mapping = {}
+                    project_implementation_mapping = {}
 
-                if project not in project_to_issues:
-                    project_to_issues[project] = []
+                    # Составляем карту проектов и их задач из implementation_issues
+                    for issue in implementation_issues:
+                        issue_key = issue.get('key')
+                        project_key = issue.get('fields', {}).get('project', {}).get('key', '')
 
-                project_to_issues[project].append(issue_key)
-
-            # Update the CLM keys data with project mapping
-            try:
-                with open(clm_keys_path, 'r', encoding='utf-8') as f:
-                    clm_keys_data = json.load(f)
-
-                clm_keys_data['project_issue_mapping'] = project_to_issues
-
-                with open(clm_keys_path, 'w', encoding='utf-8') as f:
-                    json.dump(clm_keys_data, f, indent=4, ensure_ascii=False)
-            except Exception as e:
-                logger.error(f"Error updating CLM keys data with project mapping: {e}")
+                        if issue_key and project_key:
+                            if project_key not in project_implementation_mapping:
+                                project_implementation_mapping[project_key] = []
+                            project_implementation_mapping[project_key].append(issue_key)
 
         # Create visualizations
         analysis_state['status_message'] = 'Creating visualizations...'
@@ -734,7 +725,7 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
         analysis_state['status_message'] = 'Creating interactive charts...'
         analysis_state['progress'] = 80
 
-        # Use the prepare_chart_data function with components to projects mapping
+        # Prepare chart data
         chart_data = prepare_chart_data(
             df,
             data_source=data_source,
@@ -832,11 +823,13 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
         analysis_state['progress'] = 100
         analysis_state['last_run'] = timestamp
 
-        # Save raw issues for diagnostics
-        raw_issues_path = os.path.join(output_dir, 'raw_issues.json')
-        with open(raw_issues_path, 'w', encoding='utf-8') as f:
-            json.dump(issues, f, indent=2, ensure_ascii=False)
-        logger.info(f"Raw issue data saved to {raw_issues_path}")
+        # Save raw issues for diagnostics - no longer needed since we already saved the combined issues
+        if data_source != 'clm':
+            # Only for Jira mode - for CLM mode we already saved a more comprehensive structure
+            raw_issues_path = os.path.join(output_dir, 'raw_issues.json')
+            with open(raw_issues_path, 'w', encoding='utf-8') as f:
+                json.dump(issues, f, indent=2, ensure_ascii=False)
+            logger.info(f"Raw issue data saved to {raw_issues_path}")
 
     except Exception as e:
         logger.error(f"Error during analysis: {e}", exc_info=True)
@@ -940,55 +933,81 @@ def map_components_to_projects(est_issues, implementation_issues, all_related_is
     mapping = {}
 
     # Специальная обработка для компонента DOC - поиск тикетов типа Documentation
-    if 'DOC' in components and all_related_issues:
-        doc_projects = set()
-        for issue in all_related_issues:
-            # Проверяем тип задачи
-            issue_type = issue.get('fields', {}).get('issuetype', {}).get('name', '')
-            if issue_type == 'Documentation':
-                project_key = issue.get('fields', {}).get('project', {}).get('key', '')
-                if project_key:
-                    doc_projects.add(project_key)
+    if 'DOC' in components:
+        # Default empty list for DOC component
+        mapping['DOC'] = []
+        logger.info("Processing DOC component specifically")
 
-        if doc_projects:
-            # Добавляем найденные проекты для компонента DOC
-            doc_projects_list = list(doc_projects)
-            mapping['DOC'] = doc_projects_list
-            logger.info(f"Found Documentation issues in projects: {doc_projects_list} for DOC component")
+        # Try to find Documentation issue types
+        if all_related_issues:
+            doc_projects = set()
+            doc_issues_found = False
+
+            # Check all related issues for Documentation type
+            for issue in all_related_issues:
+                issue_type = issue.get('fields', {}).get('issuetype', {}).get('name', '')
+                if issue_type == 'Documentation':
+                    doc_issues_found = True
+                    project_key = issue.get('fields', {}).get('project', {}).get('key', '')
+                    if project_key and project_key in projects:
+                        doc_projects.add(project_key)
+                        logger.info(f"Found Documentation issue {issue.get('key', 'unknown')} in project {project_key}")
+
+            # If we found projects with Documentation issues, use them
+            if doc_projects:
+                mapping['DOC'] = list(doc_projects)
+                logger.info(f"Mapped DOC component to projects with Documentation issues: {list(doc_projects)}")
+            else:
+                # No projects with Documentation issues found
+                if doc_issues_found:
+                    logger.warning("Found Documentation issues but couldn't extract valid project keys")
+                else:
+                    logger.warning("No Documentation issue types found among related issues")
+
+                # Use all projects as fallback for DOC component
+                if projects:
+                    # To avoid over-assignment, use at most 3 projects or all if fewer
+                    project_list = list(projects)
+                    if len(project_list) > 3:
+                        mapping['DOC'] = project_list[:3]
+                    else:
+                        mapping['DOC'] = project_list
+                    logger.info(f"Using fallback: assigned projects {mapping['DOC']} to DOC component")
         else:
-            # Если документационных задач не найдено, используем пустой список
-            mapping['DOC'] = []
-            logger.info("No Documentation issues found for DOC component")
+            logger.warning("No related issues provided to check for Documentation type")
+            # Fallback - assign the DOC component to all available projects
+            if projects:
+                mapping['DOC'] = list(projects)[:3] if len(projects) > 3 else list(projects)
+                logger.info(f"Using all available projects for DOC component: {mapping['DOC']}")
 
     # Обработка остальных компонентов
     for component in components:
-        # Пропускаем DOC, если мы его уже обработали
-        if component == 'DOC' and component in mapping:
+        # Skip DOC as it's already processed
+        if component == 'DOC':
             continue
 
-        # First attempt to find matches via parsing (substring matching)
-        matched_projects = []
-
-        # For each component, find projects with at least 3 matching characters
-        for project in projects:
-            if len(component) >= 3 and len(project) >= 3:
-                if component[:3].lower() in project.lower() or project[:3].lower() in component.lower():
-                    matched_projects.append(project)
-
-        # If parsing found matches, use them
-        if matched_projects:
-            mapping[component] = matched_projects
-            logger.info(f"Found match via parsing: Component '{component}' → {matched_projects}")
-        # Otherwise, check for exceptions
-        elif component in special_mappings:
+        # Проверяем сначала специальные правила
+        if component in special_mappings:
+            # Фильтруем только проекты, которые существуют в нашем списке проектов
             predefined_projects = [proj for proj in special_mappings[component] if proj in projects]
             if predefined_projects:
                 mapping[component] = predefined_projects
                 logger.info(f"Applied special mapping rule: Component '{component}' → {predefined_projects}")
-            else:
-                mapping[component] = []
-                logger.info(f"No valid projects found for component '{component}' in special mapping")
+                continue
+
+        # If no predefined projects matched, try substring matching
+        matched_projects = []
+        for project in projects:
+            if (len(component) >= 3 and len(project) >= 3 and
+                    (component[:3].lower() in project.lower() or project[:3].lower() in component.lower() or
+                     component.lower() in project.lower() or project.lower() in component.lower())):
+                matched_projects.append(project)
+
+        if matched_projects:
+            mapping[component] = matched_projects
+            logger.info(f"Found match via substring: Component '{component}' → {matched_projects}")
         else:
+            # No matches found, just provide an empty list
             mapping[component] = []
             logger.info(f"No matches found for component '{component}'")
 

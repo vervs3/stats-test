@@ -181,6 +181,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     project_estimates: {},
                     project_time_spent: {},
                     project_clm_estimates: {},
+                    filtered_project_estimates: {},
+                    filtered_project_time_spent: {},
                     projects: []
                 };
 
@@ -275,6 +277,12 @@ document.addEventListener('DOMContentLoaded', function() {
                                 loadingIndicator.style.display = 'block';
                             }
 
+                            // Update the data mode indicator
+                            const dataModeIndicator = document.getElementById('data-mode-indicator');
+                            if (dataModeIndicator) {
+                                dataModeIndicator.textContent = withoutPeriod ? 'Все данные CLM' : 'Данные за период';
+                            }
+
                             if (withoutPeriod && isInitialData) {
                                 // Получаем полные данные только если сейчас у нас исходные данные
                                 const timestamp = document.querySelector('[data-timestamp]')?.getAttribute('data-timestamp') ||
@@ -295,23 +303,74 @@ document.addEventListener('DOMContentLoaded', function() {
                                         // Переключаем флаг - теперь у нас не исходные данные
                                         isInitialData = false;
 
-                                        // Обновляем данные графика
+                                        // ENHANCED: Store filtered data for later use
+                                        originalChartData.project_estimates = JSON.parse(JSON.stringify(chartData.project_estimates));
+                                        originalChartData.project_time_spent = JSON.parse(JSON.stringify(chartData.project_time_spent));
+
+                                        // Save filtered data explicitly
+                                        originalChartData.filtered_project_estimates = fullData.filtered_project_estimates || {};
+                                        originalChartData.filtered_project_time_spent = fullData.filtered_project_time_spent || {};
+
+                                        // Save original project list to maintain order
+                                        originalChartData.projectOrder = [...fullProjectsList];
+
+                                        // Use full implementation issues data instead of filtered data
+                                        console.log(`Switching to full implementation data:
+                                            ${Object.keys(fullData.project_estimates).length} projects in estimates (${fullData.implementation_count} issues),
+                                            ${Object.keys(fullData.filtered_project_estimates).length} projects in filtered estimates (${fullData.filtered_count} issues)`);
+
+                                        // To debug data differences, log some examples:
+                                        // Take first 5 common projects and show the difference
+                                        const commonProjects = Object.keys(fullData.project_estimates)
+                                            .filter(p => p in fullData.filtered_project_estimates)
+                                            .slice(0, 5);
+
+                                        console.log("Data comparison examples (first 5 common projects):");
+                                        commonProjects.forEach(project => {
+                                            const fullEst = fullData.project_estimates[project] || 0;
+                                            const filteredEst = fullData.filtered_project_estimates[project] || 0;
+                                            const fullSpent = fullData.project_time_spent[project] || 0;
+                                            const filteredSpent = fullData.filtered_project_time_spent[project] || 0;
+
+                                            console.log(`Project ${project}:
+                                                Full data: Estimate=${fullEst}, Spent=${fullSpent}
+                                                Filtered: Estimate=${filteredEst}, Spent=${filteredSpent}
+                                                Differences: Estimate=${fullEst - filteredEst}, Spent=${fullSpent - filteredSpent}`);
+                                        });
+
+                                        // Обновляем данные графика с полными данными implementation issues
                                         chartData.project_estimates = fullData.project_estimates;
                                         chartData.project_time_spent = fullData.project_time_spent;
+
                                         if (fullData.project_clm_estimates) {
                                             chartData.project_clm_estimates = fullData.project_clm_estimates;
+                                            originalChartData.project_clm_estimates = JSON.parse(JSON.stringify(fullData.project_clm_estimates));
                                         }
 
-                                        // Обновляем список всех проектов
-                                        const newProjects = [...new Set([
+                                        // Maintain the original project order as much as possible
+                                        // First, get all unique projects from both datasets
+                                        const newUniqueProjects = [...new Set([
                                             ...Object.keys(fullData.project_estimates),
                                             ...Object.keys(fullData.project_time_spent),
                                             ...(fullData.project_clm_estimates ? Object.keys(fullData.project_clm_estimates) : [])
                                         ])];
 
-                                        // Обновляем fullProjectsList
+                                        // Create a set for faster lookups
+                                        const newProjectsSet = new Set(newUniqueProjects);
+
+                                        // Start with existing projects that exist in the new data
+                                        const orderedProjects = fullProjectsList.filter(p => newProjectsSet.has(p));
+
+                                        // Add any new projects that weren't in the original list
+                                        newUniqueProjects.forEach(p => {
+                                            if (!orderedProjects.includes(p)) {
+                                                orderedProjects.push(p);
+                                            }
+                                        });
+
+                                        // Update the fullProjectsList with the ordered list
                                         fullProjectsList.length = 0;
-                                        fullProjectsList.push(...newProjects);
+                                        fullProjectsList.push(...orderedProjects);
 
                                         // Сбрасываем исключенные проекты
                                         excludedProjects.clear();
@@ -322,7 +381,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                         // Обновляем график
                                         updateChart();
 
-                                        console.log("Data updated to full data:",
+                                        console.log("Data updated to full implementation data:",
                                             Object.keys(chartData.project_estimates).length,
                                             "projects in estimates,",
                                             Object.keys(chartData.project_time_spent).length,
@@ -339,6 +398,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
                                         // При ошибке переключаем обратно на исходный режим
                                         document.getElementById('withPeriod').checked = true;
+                                        if (dataModeIndicator) {
+                                            dataModeIndicator.textContent = 'Данные за период';
+                                        }
 
                                         // Скрываем индикатор загрузки
                                         if (loadingIndicator) {
@@ -346,21 +408,44 @@ document.addEventListener('DOMContentLoaded', function() {
                                         }
                                     });
                             } else if (!withoutPeriod && !isInitialData) {
-                                // Возвращаем исходные данные только если сейчас у нас не исходные данные
-                                // Восстанавливаем исходные данные из сохраненного originalChartData
-                                chartData.project_estimates = JSON.parse(JSON.stringify(originalChartData.project_estimates));
-                                chartData.project_time_spent = JSON.parse(JSON.stringify(originalChartData.project_time_spent));
+                                // Возвращаем данные с фильтрацией по worklog
+                                console.log("Switching back to filtered worklog data");
+
+                                // Use saved filtered data from original chart data
+                                if (originalChartData.filtered_project_estimates &&
+                                    Object.keys(originalChartData.filtered_project_estimates).length > 0) {
+                                    // If we have explicit filtered data saved, use it
+                                    chartData.project_estimates = JSON.parse(JSON.stringify(originalChartData.filtered_project_estimates));
+                                    chartData.project_time_spent = JSON.parse(JSON.stringify(originalChartData.filtered_project_time_spent));
+                                    console.log("Using explicitly saved filtered data");
+
+                                    // Log some data to confirm we're using different data
+                                    const projectExample = Object.keys(chartData.project_estimates)[0];
+                                    if (projectExample) {
+                                        console.log(`Example project ${projectExample}:
+                                            Current estimate: ${chartData.project_estimates[projectExample]},
+                                            Original full estimate: ${originalChartData.project_estimates[projectExample]}`);
+                                    }
+                                } else {
+                                    // Otherwise fallback to original data
+                                    chartData.project_estimates = JSON.parse(JSON.stringify(originalChartData.project_estimates));
+                                    chartData.project_time_spent = JSON.parse(JSON.stringify(originalChartData.project_time_spent));
+                                    console.log("Using fallback original data");
+                                }
 
                                 if (originalChartData.project_clm_estimates) {
                                     chartData.project_clm_estimates = JSON.parse(JSON.stringify(originalChartData.project_clm_estimates));
                                 }
 
+                                // Restore the original project order if available
+                                if (originalChartData.projectOrder && originalChartData.projectOrder.length > 0) {
+                                    console.log("Restoring original project order");
+                                    fullProjectsList.length = 0;
+                                    fullProjectsList.push(...originalChartData.projectOrder);
+                                }
+
                                 // Переключаем флаг - теперь у нас исходные данные
                                 isInitialData = true;
-
-                                // Восстанавливаем исходный список проектов
-                                fullProjectsList.length = 0;
-                                fullProjectsList.push(...originalChartData.projects);
 
                                 // Сбрасываем исключенные проекты
                                 excludedProjects.clear();
@@ -371,7 +456,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 // Обновляем график
                                 updateChart();
 
-                                console.log("Data restored to original:",
+                                console.log("Data restored to filtered worklog data:",
                                     Object.keys(chartData.project_estimates).length,
                                     "projects in estimates,",
                                     Object.keys(chartData.project_time_spent).length,
@@ -382,8 +467,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                     loadingIndicator.style.display = 'none';
                                 }
                             } else {
-                                // Если мы пытаемся переключиться на режим, который уже активен
-                                // (например, кликаем на "С периодом" когда уже в этом режиме)
+                                // If we're trying to switch to a mode that's already active
                                 console.log("No data change needed, already in the right mode.");
 
                                 // Скрываем индикатор загрузки
@@ -474,110 +558,188 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 // Функция для обновления данных графика на основе выбранных проектов
                 function updateChart() {
-                    // Фильтруем проекты, исключая те, что отмечены для исключения
-                    const filteredProjects = fullProjectsList.filter(project => !excludedProjects.has(project));
+    // Фильтруем проекты, исключая те, что отмечены для исключения
+    const filteredProjects = fullProjectsList.filter(project => !excludedProjects.has(project));
 
-                    // Ограничиваем количество проектов для читаемости (можно увеличить)
-                    const displayProjects = filteredProjects.slice(0, 30);
+    // Проверяем, что у нас есть данные и проекты для отображения
+    if (filteredProjects.length === 0) {
+        console.warn("No projects to display after filtering");
+        // Instead of leaving chart empty, show a message
+        if (comparisonChart) {
+            comparisonChart.destroy();
+            comparisonChart = null;
 
-                    const estimateData = displayProjects.map(project => chartData.project_estimates[project] || 0);
-                    const timeSpentData = displayProjects.map(project => chartData.project_time_spent[project] || 0);
+            const ctx = ctxComparison.getContext('2d');
+            ctx.clearRect(0, 0, ctxComparison.width, ctxComparison.height);
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = '16px Arial';
+            ctx.fillStyle = '#666';
+            ctx.fillText('Нет данных для отображения', ctxComparison.width / 2, ctxComparison.height / 2);
+        }
+        return;
+    }
 
-                    // Если график уже существует, обновляем его данные
-                    if (comparisonChart) {
-                        comparisonChart.data.labels = displayProjects;
+    // Ограничиваем количество проектов для читаемости (можно увеличить)
+    const displayProjects = filteredProjects.slice(0, 30);
 
-                        // Обновляем данные каждого набора данных
-                        let datasetIndex = 0;
+    // Verify every project in displayProjects has a corresponding entry in chart data
+    displayProjects.forEach(project => {
+        if (!(project in chartData.project_estimates) && !(project in chartData.project_time_spent)) {
+            console.warn(`Project ${project} missing from both estimates and time spent data`);
+        }
+    });
 
-                        // Если есть CLM оценки, обновляем их данные
-                        if (chartData.project_clm_estimates &&
-                            Object.values(chartData.project_clm_estimates).some(val => val > 0)) {
-                            comparisonChart.data.datasets[datasetIndex].data =
-                                displayProjects.map(project => chartData.project_clm_estimates[project] || 0);
-                            datasetIndex++;
-                        }
+    // Log some debug info about the data we're using
+    if (displayProjects.length > 0) {
+        const firstProject = displayProjects[0];
+        console.log(`First project ${firstProject} data:
+            Estimate: ${chartData.project_estimates[firstProject] || 0},
+            Time spent: ${chartData.project_time_spent[firstProject] || 0}`);
+    }
 
-                        // Обновляем исходные оценки
-                        comparisonChart.data.datasets[datasetIndex].data = estimateData;
-                        datasetIndex++;
+    // Make sure we have valid data arrays
+    const estimateData = displayProjects.map(project => chartData.project_estimates[project] || 0);
+    const timeSpentData = displayProjects.map(project => chartData.project_time_spent[project] || 0);
 
-                        // Обновляем затраченное время
-                        comparisonChart.data.datasets[datasetIndex].data = timeSpentData;
+    // Verify data has meaningful values and isn't all zeros
+    const estimateSum = estimateData.reduce((sum, val) => sum + val, 0);
+    const timeSpentSum = timeSpentData.reduce((sum, val) => sum + val, 0);
+    console.log(`Chart data totals - Estimate: ${estimateSum.toFixed(2)}, Time spent: ${timeSpentSum.toFixed(2)}`);
 
-                        comparisonChart.update();
+    // Check if data sums are effectively zero
+    if (estimateSum < 0.01 && timeSpentSum < 0.01) {
+        console.warn("Chart data totals are effectively zero, chart may appear empty");
+    }
+
+    let needNewChart = !comparisonChart;
+
+    // Если график уже существует, обновляем его данные
+    if (comparisonChart) {
+        comparisonChart.data.labels = displayProjects;
+
+        // Обновляем данные каждого набора данных
+        let datasetIndex = 0;
+
+        // Если есть CLM оценки, обновляем их данные
+        if (chartData.project_clm_estimates &&
+            Object.values(chartData.project_clm_estimates).some(val => val > 0)) {
+
+            if (datasetIndex >= comparisonChart.data.datasets.length) {
+                // Dataset missing, recreate chart
+                comparisonChart.destroy();
+                comparisonChart = null;
+                needNewChart = true;
+            } else {
+                comparisonChart.data.datasets[datasetIndex].data =
+                    displayProjects.map(project => chartData.project_clm_estimates[project] || 0);
+                datasetIndex++;
+            }
+        }
+
+        // Check if we have enough datasets
+        if (!needNewChart && datasetIndex + 1 >= comparisonChart.data.datasets.length) {
+            console.warn("Not enough datasets in chart, recreating");
+            comparisonChart.destroy();
+            comparisonChart = null;
+            needNewChart = true;
+        }
+
+        if (!needNewChart) {
+            // Обновляем исходные оценки
+            comparisonChart.data.datasets[datasetIndex].data = estimateData;
+            datasetIndex++;
+
+            // Обновляем затраченное время
+            comparisonChart.data.datasets[datasetIndex].data = timeSpentData;
+
+            // Force a full redraw
+            comparisonChart.update('none');
+        }
+    }
+
+    // Create new chart if needed
+    if (needNewChart) {
+        // Получаем данные CLM оценок, если они доступны
+        const clmEstimateData = chartData.project_clm_estimates
+            ? displayProjects.map(project => chartData.project_clm_estimates[project] || 0)
+            : null;
+
+        // Создаем массив набора данных, который будет использоваться для графика
+        const datasets = [];
+
+        // Добавляем CLM оценку только если данные доступны
+        if (clmEstimateData && clmEstimateData.some(val => val > 0)) {
+            datasets.push({
+                label: 'CLM оценка (часы)',
+                data: clmEstimateData,
+                backgroundColor: 'rgba(75, 192, 192, 0.7)',  // Зеленоватый цвет
+                borderColor: 'rgba(75, 192, 192, 1)',
+                borderWidth: 1
+            });
+        }
+
+        // Добавляем исходную оценку и затраченное время всегда
+        datasets.push({
+            label: 'Исходная оценка (часы)',
+            data: estimateData,
+            backgroundColor: 'rgba(54, 162, 235, 0.7)',  // Синий
+            borderColor: 'rgba(54, 162, 235, 1)',
+            borderWidth: 1
+        });
+
+        datasets.push({
+            label: 'Затраченное время (часы)',
+            data: timeSpentData,
+            backgroundColor: 'rgba(255, 99, 132, 0.7)',  // Красный
+            borderColor: 'rgba(255, 99, 132, 1)',
+            borderWidth: 1
+        });
+
+        // Clear canvas before creating new chart
+        if (ctxComparison.chart) {
+            ctxComparison.chart.destroy();
+        }
+
+        // Force a clear
+        const ctx = ctxComparison.getContext('2d');
+        ctx.clearRect(0, 0, ctxComparison.width, ctxComparison.height);
+
+        // Создаем новый график
+        comparisonChart = new Chart(ctxComparison.getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: displayProjects,
+                datasets: datasets
+            },
+            options: {
+                ...commonOptions,
+                onClick: (event, activeElements) => {
+                    if (activeElements.length === 0) return;
+
+                    const index = activeElements[0].index;
+                    const project = displayProjects[index];
+
+                    // Add more detailed logging
+                    console.log(`Comparison chart click - Index: ${index}, Project: ${project}`);
+
+                    // Use the same special JQL for CLM mode
+                    const isClmAnalysis = !!document.querySelector('[data-source="clm"]');
+                    if (isClmAnalysis) {
+                        // Check selected period mode
+                        const withoutPeriod = document.getElementById('withoutPeriod')?.checked || false;
+                        createSpecialJQL(project, 'project_issues', withoutPeriod);
+                    } else if (typeof createJiraLink === 'function') {
+                        // Ensure we're passing the correct project
+                        createJiraLink(project);
                     } else {
-                        // Получаем данные CLM оценок, если они доступны
-                        const clmEstimateData = chartData.project_clm_estimates
-                            ? displayProjects.map(project => chartData.project_clm_estimates[project] || 0)
-                            : null;
-
-                        // Создаем массив набора данных, который будет использоваться для графика
-                        const datasets = [];
-
-                        // Добавляем CLM оценку только если данные доступны
-                        if (clmEstimateData && clmEstimateData.some(val => val > 0)) {
-                            datasets.push({
-                                label: 'CLM оценка (часы)',
-                                data: clmEstimateData,
-                                backgroundColor: 'rgba(75, 192, 192, 0.7)',  // Зеленоватый цвет
-                                borderColor: 'rgba(75, 192, 192, 1)',
-                                borderWidth: 1
-                            });
-                        }
-
-                        // Добавляем исходную оценку и затраченное время всегда
-                        datasets.push({
-                            label: 'Исходная оценка (часы)',
-                            data: estimateData,
-                            backgroundColor: 'rgba(54, 162, 235, 0.7)',  // Синий
-                            borderColor: 'rgba(54, 162, 235, 1)',
-                            borderWidth: 1
-                        });
-
-                        datasets.push({
-                            label: 'Затраченное время (часы)',
-                            data: timeSpentData,
-                            backgroundColor: 'rgba(255, 99, 132, 0.7)',  // Красный
-                            borderColor: 'rgba(255, 99, 132, 1)',
-                            borderWidth: 1
-                        });
-
-                        // Создаем новый график
-                        comparisonChart = new Chart(ctxComparison.getContext('2d'), {
-                            type: 'bar',
-                            data: {
-                                labels: displayProjects,
-                                datasets: datasets
-                            },
-                            options: {
-                                ...commonOptions,
-                                onClick: (event, activeElements) => {
-                                    if (activeElements.length === 0) return;
-
-                                    const index = activeElements[0].index;
-                                    const project = displayProjects[index];
-
-                                    // Add more detailed logging
-                                    console.log(`Comparison chart click - Index: ${index}, Project: ${project}`);
-
-                                    // Use the same special JQL for CLM mode
-                                    const isClmAnalysis = !!document.querySelector('[data-source="clm"]');
-                                    if (isClmAnalysis) {
-                                        // Check selected period mode
-                                        const withoutPeriod = document.getElementById('withoutPeriod')?.checked || false;
-                                        createSpecialJQL(project, 'project_issues', withoutPeriod);
-                                    } else if (typeof createJiraLink === 'function') {
-                                        // Ensure we're passing the correct project
-                                        createJiraLink(project);
-                                    } else {
-                                        console.error("createJiraLink function not found");
-                                    }
-                                }
-                            }
-                        });
+                        console.error("createJiraLink function not found");
                     }
                 }
+            }
+        });
+    }
+}
 
                 // Инициализируем график с полным набором данных
                 updateChart();

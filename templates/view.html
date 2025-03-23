@@ -164,7 +164,7 @@
                                         </tr>
                                         {% endif %}
 
-                                        <!-- CLM-specific metrics -->
+                                        <!-- CLM-specific metrics - Updated to include Analyzing from CLM -->
                                         {% if data.data_source == 'clm' %}
                                             {% if data.summary.clm_issues_count is defined %}
                                             <tr>
@@ -189,8 +189,8 @@
                                             {% if data.summary.improvement_issues_count is defined %}
                                             <tr>
                                                 <th>
-                                                    Количество Improvement тикетов:
-                                                    <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.improvement_issues_count }}">ⓘ</i>
+                                                    Количество Improvement и Analyzing тикетов:
+                                                    <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="Количество тикетов типа 'Improvement from CLM' и 'Analyzing from CLM'">ⓘ</i>
                                                 </th>
                                                 <td>{{ data.summary.improvement_issues_count }}</td>
                                             </tr>
@@ -308,8 +308,11 @@
             <!-- Сравнение оценки и затраченного времени -->
             <div class="col-lg-6 mb-4">
                 <div class="card h-100">
-                    <div class="card-header">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h4>Сравнение оценки и затраченного времени</h4>
+                        {% if data.data_source == 'clm' %}
+                            <span id="data-mode-indicator" class="badge bg-info">Данные за период</span>
+                        {% endif %}
                     </div>
                     <div class="card-body">
                         <div class="mb-2 small text-muted">Нажмите на столбец графика, чтобы открыть соответствующие задачи в Jira</div>

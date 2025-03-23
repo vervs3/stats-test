@@ -263,6 +263,7 @@ class JiraAnalyzer:
     def get_clm_related_issues(self, clm_issues):
         """
         Get all issues related to CLM issues following the specific logic.
+        Now includes both "Improvement from CLM" and "Analyzing from CLM" issue types.
 
         Args:
             clm_issues (list): List of CLM issue dictionaries
@@ -304,39 +305,57 @@ class JiraAnalyzer:
                       issue.get('fields', {}).get('project', {}).get('key') == 'EST' or
                       issue.get('fields', {}).get('project', {}).get('name') == 'Оценки CLM']
 
-        # Get Improvement issues linked to CLM with "links CLM to" link
-        self.logger.info(f"Fetching Improvement issues linked to CLM...")
-        improvement_issues = self.get_linked_issues(clm_keys, link_type="links CLM to")
+        # Get issues linked to CLM with "links CLM to" link
+        # Now includes both "Improvement from CLM" and "Analyzing from CLM" issue types
+        self.logger.info(f"Fetching Improvement and Analyzing issues linked to CLM...")
+        linked_issues = self.get_linked_issues(clm_keys, link_type="links CLM to")
 
-        # Filter for type "Improvement from CLM"
-        improvement_issues = [issue for issue in improvement_issues if
-                              issue.get('fields', {}).get('issuetype', {}).get('name') == 'Improvement from CLM']
+        # Filter for both "Improvement from CLM" and "Analyzing from CLM" types
+        improvement_issues = []
+        analyzing_issues = []
 
-        # Get implementation issues linked to Improvements with "is realized in" link
+        for issue in linked_issues:
+            issue_type = issue.get('fields', {}).get('issuetype', {}).get('name')
+            if issue_type == 'Improvement from CLM':
+                improvement_issues.append(issue)
+            elif issue_type == 'Analyzing from CLM':
+                analyzing_issues.append(issue)
+
+        # Log counts of each type
+        self.logger.info(f"Found {len(improvement_issues)} 'Improvement from CLM' issues")
+        self.logger.info(f"Found {len(analyzing_issues)} 'Analyzing from CLM' issues")
+
+        # Combine for further processing, but keep the original improvement_issues separate
+        # to maintain backward compatibility with the rest of the code
+        all_clm_linked_issues = improvement_issues + analyzing_issues
+
+        # Get implementation issues linked to both Improvements and Analyzing issues with "is realized in" link
         implementation_keys = []
         implementation_issues = []
 
-        improvement_keys = [issue.get('key') for issue in improvement_issues if issue.get('key')]
-        if improvement_keys:
-            self.logger.info(f"Fetching implementation issues linked to {len(improvement_keys)} Improvement issues...")
-            implementation_issues = self.get_linked_issues(improvement_keys, link_type="is realized in")
+        all_linked_keys = [issue.get('key') for issue in all_clm_linked_issues if issue.get('key')]
+
+        if all_linked_keys:
+            self.logger.info(
+                f"Fetching implementation issues linked to {len(all_linked_keys)} Improvement and Analyzing issues...")
+            implementation_issues = self.get_linked_issues(all_linked_keys, link_type="is realized in")
             implementation_keys = [issue.get('key') for issue in implementation_issues if issue.get('key')]
 
         # Get ALL implementation issue keys including existing ones from improvement links
         all_implementation_keys = implementation_keys.copy()
 
-        # Also get subtasks for improvement issues directly
-        improvement_subtasks = []
-        if improvement_keys:
-            for i in range(0, len(improvement_keys), 10):
-                chunk = improvement_keys[i:i + 10]
+        # Also get subtasks for improvement and analyzing issues directly
+        linked_subtasks = []
+        if all_linked_keys:
+            for i in range(0, len(all_linked_keys), 10):
+                chunk = all_linked_keys[i:i + 10]
                 parents_clause = " OR ".join([f'parent = "{key}"' for key in chunk])
                 subtasks_query = parents_clause
 
-                self.logger.info(f"Fetching subtasks of improvement issues with query: {subtasks_query}")
+                self.logger.info(f"Fetching subtasks of improvement and analyzing issues with query: {subtasks_query}")
                 try:
                     chunk_subtasks = self.get_issues_by_filter(jql_query=subtasks_query)
-                    improvement_subtasks.extend(chunk_subtasks)
+                    linked_subtasks.extend(chunk_subtasks)
 
                     # Add these subtask keys to the implementation keys for getting their subtasks too
                     for subtask in chunk_subtasks:
@@ -347,7 +366,8 @@ class JiraAnalyzer:
                     self.logger.error(f"Error fetching improvement subtasks: {e}")
 
         # Use all_implementation_keys instead of implementation_keys for further subtask fetching
-        self.logger.info(f"Total implementation keys including improvement subtasks: {len(all_implementation_keys)}")
+        self.logger.info(
+            f"Total implementation keys including improvement and analyzing subtasks: {len(all_implementation_keys)}")
 
         # Get subtasks using direct parent query instead of subtasksOf
         subtasks = []
@@ -380,7 +400,7 @@ class JiraAnalyzer:
                     self.logger.error(f"Error fetching epic issues: {e}")
 
         # Combine all implementation-related issues
-        implementation_issues.extend(improvement_subtasks)  # Add improvement subtasks
+        implementation_issues.extend(linked_subtasks)  # Add improvement and analyzing subtasks
         implementation_issues.extend(subtasks)
         implementation_issues.extend(epic_issues)
 
@@ -508,8 +528,12 @@ class JiraAnalyzer:
         subtask_count = issue_types.get('Sub-task', 0) + issue_types.get('Subtask', 0)
         self.logger.info(f"Final subtasks in implementation issues: {subtask_count}")
 
+        # Add analyzing issues to improvement_issues for the return value
+        # to ensure they're included in all downstream processing
+        improvement_issues.extend(analyzing_issues)
+
         self.logger.info(
-            f"Found {len(est_issues)} EST issues, {len(improvement_issues)} Improvement issues, and {len(implementation_issues)} implementation issues")
+            f"Found {len(est_issues)} EST issues, {len(improvement_issues)} Improvement/Analyzing issues, and {len(implementation_issues)} implementation issues")
         return est_issues, improvement_issues, implementation_issues
 
     def get_subtasks_by_rest_api(self, issue_keys):

@@ -22,7 +22,7 @@ metrics_tooltips = {
     'no_transitions_tasks_count': 'Количество задач, которые никогда не меняли статус (вероятно все еще новые задачи)',
     'clm_issues_count': 'Количество найденных тикетов CLM',
     'est_issues_count': 'Количество связанных тикетов EST',
-    'improvement_issues_count': 'Количество тикетов типа "Improvement from CLM"',
+    'improvement_issues_count': 'Количество тикетов типа "Improvement from CLM" и "Analyzing from CLM"',
     'linked_issues_count': 'Общее количество связанных задач'
 }
 
