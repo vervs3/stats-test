@@ -9,11 +9,14 @@ from modules.jira_analyzer import JiraAnalyzer
 from modules.data_processor import process_issues_data, get_improved_open_statuses
 
 try:
-    from config import PROJECT_BUDGET
+    from config import PROJECT_BUDGET, DASHBOARD_UPDATE_HOUR, DASHBOARD_UPDATE_MINUTE, DASHBOARD_REFRESH_INTERVAL
 except ImportError:
-    # Если импорт не удался, используем значение по умолчанию
-    logger.warning("Could not import PROJECT_BUDGET from config.py, using default value")
+    # Если импорт не удался, используем значения по умолчанию
+    logger.warning("Could not import dashboard configuration from config.py, using default values")
     PROJECT_BUDGET = 18000
+    DASHBOARD_UPDATE_HOUR = 9
+    DASHBOARD_UPDATE_MINUTE = 0
+    DASHBOARD_REFRESH_INTERVAL = 3600
 
 # Get logger
 logger = logging.getLogger(__name__)
@@ -29,9 +32,9 @@ if not os.path.exists(DASHBOARD_DIR):
 def collect_daily_data():
     """
     Collect and process daily data for the NBSS Dashboard.
-    This should be run once per day at 9:00 AM.
+    This should be run daily at the configured time (default: 9:00 AM).
     """
-    logger.info("Collecting daily data for NBSS Dashboard")
+    logger.info(f"Collecting daily data for NBSS Dashboard at {DASHBOARD_UPDATE_HOUR}:{DASHBOARD_UPDATE_MINUTE}")
 
     try:
         # Initialize Jira analyzer
@@ -64,9 +67,7 @@ def collect_daily_data():
         total_time_spent_days = total_time_spent_hours / 8
 
         # Calculate projected time spent
-        # Budget = 23000 person-days, project duration = 2025 year
-
-        # Используйте переменную вместо жестко заданного значения
+        # Budget = PROJECT_BUDGET person-days, project duration = 2025 year
         budget = PROJECT_BUDGET
         year_start = date(2025, 1, 1)
 
@@ -95,6 +96,7 @@ def collect_daily_data():
 
         # Calculate open tasks data
         open_tasks_data = {}
+        open_tasks_issue_keys = []
         if df is not None and not df.empty:
             # Filter for open tasks with time spent
             open_statuses = get_improved_open_statuses(df)
@@ -105,9 +107,68 @@ def collect_daily_data():
                 open_tasks_by_project = open_tasks.groupby('project').size().to_dict()
                 open_tasks_data = open_tasks_by_project
 
+                # Store issue keys for open tasks
+                open_tasks_issue_keys = open_tasks['issue_key'].tolist()
+
+        # Get today's date string for file naming
+        date_str = datetime.now().strftime('%Y%m%d')
+
+        # Create directories for today's data
+        daily_dir = os.path.join(DASHBOARD_DIR, date_str)
+        data_dir = os.path.join(daily_dir, 'data')
+
+        if not os.path.exists(daily_dir):
+            os.makedirs(daily_dir)
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir)
+
+        # Save raw issues in a similar format to CLM analyzer
+        combined_issues = {
+            "filtered_issues": implementation_issues,  # Use implementation issues as filtered
+            "all_implementation_issues": implementation_issues,
+            "clm_issues": clm_issues,
+            "est_issues": est_issues,
+            "improvement_issues": improvement_issues
+        }
+
+        # Save raw issues
+        raw_issues_path = os.path.join(daily_dir, 'raw_issues.json')
+        with open(raw_issues_path, 'w', encoding='utf-8') as f:
+            json.dump(combined_issues, f, indent=2, ensure_ascii=False)
+        logger.info(f"Saved raw issues data to {raw_issues_path}")
+
+        # Also save issue keys to data directory for JQL generation
+        keys_data = {
+            'clm_issue_keys': [issue.get('key') for issue in clm_issues if issue.get('key')],
+            'est_issue_keys': [issue.get('key') for issue in est_issues if issue.get('key')],
+            'improvement_issue_keys': [issue.get('key') for issue in improvement_issues if issue.get('key')],
+            'implementation_issue_keys': [issue.get('key') for issue in implementation_issues if issue.get('key')],
+            'filtered_issue_keys': [issue.get('key') for issue in implementation_issues if issue.get('key')],
+            # Same as implementation
+            'open_tasks_issue_keys': open_tasks_issue_keys
+        }
+
+        # Group issue keys by project for JQL generation
+        project_issue_mapping = {}
+        for issue in implementation_issues:
+            issue_key = issue.get('key')
+            project_key = issue.get('fields', {}).get('project', {}).get('key', '')
+            if issue_key and project_key:
+                if project_key not in project_issue_mapping:
+                    project_issue_mapping[project_key] = []
+                project_issue_mapping[project_key].append(issue_key)
+
+        keys_data['project_issue_mapping'] = project_issue_mapping
+
+        clm_keys_path = os.path.join(data_dir, 'clm_issue_keys.json')
+        with open(clm_keys_path, 'w', encoding='utf-8') as f:
+            json.dump(keys_data, f, indent=4, ensure_ascii=False)
+        logger.info(f"Saved CLM issue keys to {clm_keys_path}")
+
         # Create data to save
         dashboard_data = {
             'date': datetime.now().strftime('%Y-%m-%d'),
+            'timestamp': date_str,  # Use date as timestamp for folder reference
             'total_time_spent_hours': float(total_time_spent_hours),
             'total_time_spent_days': float(total_time_spent_days),
             'projected_time_spent_days': float(projected_time_spent),
@@ -117,7 +178,8 @@ def collect_daily_data():
             'clm_issues_count': len(clm_issues),
             'est_issues_count': len(est_issues),
             'improvement_issues_count': len(improvement_issues),
-            'implementation_issues_count': len(implementation_issues)
+            'implementation_issues_count': len(implementation_issues),
+            'refresh_interval': DASHBOARD_REFRESH_INTERVAL  # Include the refresh interval
         }
 
         # Save the data
@@ -176,6 +238,15 @@ def get_dashboard_data():
         # Get latest data
         latest_data = all_data[-1] if all_data else None
 
+        # Get the raw data for the latest date if available
+        latest_date = latest_data.get('timestamp') if latest_data else None
+        latest_folder_path = os.path.join(DASHBOARD_DIR, latest_date) if latest_date else None
+        has_raw_data = False
+
+        if latest_folder_path and os.path.exists(latest_folder_path):
+            raw_issues_path = os.path.join(latest_folder_path, 'raw_issues.json')
+            has_raw_data = os.path.exists(raw_issues_path)
+
         # Create time series data
         time_series = {
             'dates': [data['date'] for data in all_data],
@@ -186,15 +257,25 @@ def get_dashboard_data():
         # Get latest open tasks data
         open_tasks_data = latest_data['open_tasks_data'] if latest_data else {}
 
+        # Get refresh interval from latest data or use the default
+        refresh_interval = latest_data.get('refresh_interval',
+                                           DASHBOARD_REFRESH_INTERVAL) if latest_data else DASHBOARD_REFRESH_INTERVAL
+
         return {
             'time_series': time_series,
             'latest_data': latest_data,
-            'open_tasks_data': open_tasks_data
+            'open_tasks_data': open_tasks_data,
+            'latest_timestamp': latest_date,
+            'has_raw_data': has_raw_data,
+            'refresh_interval': refresh_interval
         }
     except Exception as e:
         logger.error(f"Error getting dashboard data: {e}", exc_info=True)
         return {
             'time_series': {'dates': [], 'actual_time_spent': [], 'projected_time_spent': []},
             'latest_data': None,
-            'open_tasks_data': {}
+            'open_tasks_data': {},
+            'latest_timestamp': None,
+            'has_raw_data': False,
+            'refresh_interval': DASHBOARD_REFRESH_INTERVAL
         }

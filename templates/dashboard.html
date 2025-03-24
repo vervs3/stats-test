@@ -2,7 +2,18 @@
 
 {% block title %}NBSS Dashboard{% endblock %}
 
-{% block header %}NBSS Dashboard{% endblock %}
+{% block header %}
+    NBSS Dashboard
+    <small class="text-muted">
+        <span id="last-refresh-time">{{ now.strftime('%H:%M:%S') }}</span>
+        <button id="manual-refresh" class="btn btn-sm btn-outline-secondary ms-2" title="Обновить данные">
+            <i class="bi bi-arrow-clockwise"></i>
+        </button>
+        <button id="trigger-collection" class="btn btn-sm btn-outline-primary ms-2" title="Запустить сбор данных">
+            <i class="bi bi-cloud-download"></i> Сбор данных
+        </button>
+    </small>
+{% endblock %}
 
 {% block content %}
     <div class="row mb-4">
@@ -85,8 +96,96 @@
             </div>
         </div>
     </div>
+
+    <!-- Data Collection Modal -->
+    <div class="modal fade" id="collectionModal" tabindex="-1" aria-labelledby="collectionModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="collectionModalLabel">Сбор данных для Dashboard</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p>Сбор данных для Dashboard запущен. Этот процесс может занять несколько минут.</p>
+                    <p class="text-muted">Процесс выполняется в фоновом режиме. Вы можете закрыть это окно.</p>
+                    <div class="progress">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar"
+                             style="width: 100%" aria-valuenow="100" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                </div>
+            </div>
+        </div>
+    </div>
 {% endblock %}
 
 {% block scripts %}
+    <script>
+        // Set refresh interval from the server configuration
+        document.body.dataset.refreshInterval = "{{ refresh_interval }}";
+
+        // Add event listener for manual refresh and data collection
+        document.addEventListener('DOMContentLoaded', function() {
+            const manualRefreshBtn = document.getElementById('manual-refresh');
+            if (manualRefreshBtn) {
+                manualRefreshBtn.addEventListener('click', function() {
+                    fetchDashboardData();
+                });
+            }
+
+            const triggerCollectionBtn = document.getElementById('trigger-collection');
+            if (triggerCollectionBtn) {
+                triggerCollectionBtn.addEventListener('click', function() {
+                    triggerDataCollection();
+                });
+            }
+        });
+
+        // Function to trigger data collection
+        function triggerDataCollection() {
+            console.log("Triggering data collection...");
+
+            // Disable button and show loading state
+            const btn = document.getElementById('trigger-collection');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Запуск...';
+            }
+
+            // Show modal
+            const collectionModal = new bootstrap.Modal(document.getElementById('collectionModal'));
+            collectionModal.show();
+
+            // Call the API to trigger data collection
+            fetch('/api/dashboard/collect', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log("Data collection response:", data);
+
+                // Set a timer to refresh the dashboard data after 30 seconds
+                setTimeout(function() {
+                    fetchDashboardData();
+                }, 30000);
+            })
+            .catch(error => {
+                console.error('Error triggering data collection:', error);
+                alert('Ошибка при запуске сбора данных: ' + error);
+            })
+            .finally(() => {
+                // Re-enable button
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-cloud-download"></i> Сбор данных';
+                }
+            });
+        }
+    </script>
     <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 {% endblock %}

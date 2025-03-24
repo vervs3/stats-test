@@ -1,10 +1,12 @@
 import os
 import json
 import logging
-from flask import request, jsonify
+from flask import request, jsonify, render_template
 from modules.log_buffer import get_logs
 from modules.data_processor import get_improved_open_statuses
 import pandas as pd
+
+from routes.analysis_routes import metrics_tooltips
 
 # Get logger
 logger = logging.getLogger(__name__)
@@ -40,9 +42,21 @@ def register_api_routes(app):
             list: List of issue keys
         """
         try:
-            # Path to the issue keys file
-            issue_keys_dir = os.path.join(CHARTS_DIR, timestamp, 'data')
-            clm_keys_path = os.path.join(issue_keys_dir, 'clm_issue_keys.json')
+            # Check if this is a dashboard timestamp (YYYYMMDD format) or regular CLM analysis (YYYYMMDD_HHMMSS)
+            is_dashboard_format = timestamp and len(timestamp) == 8 and timestamp.isdigit()
+
+            if is_dashboard_format:
+                # For dashboard data, look in DASHBOARD_DIR
+                DASHBOARD_DIR = 'nbss_data'
+                issue_keys_dir = os.path.join(DASHBOARD_DIR, timestamp, 'data')
+                clm_keys_path = os.path.join(issue_keys_dir, 'clm_issue_keys.json')
+                logger.info(f"Looking for dashboard issue keys at: {clm_keys_path}")
+            else:
+                # For regular CLM analysis, look in CHARTS_DIR
+                CHARTS_DIR = 'jira_charts'
+                issue_keys_dir = os.path.join(CHARTS_DIR, timestamp, 'data')
+                clm_keys_path = os.path.join(issue_keys_dir, 'clm_issue_keys.json')
+                logger.info(f"Looking for CLM analysis issue keys at: {clm_keys_path}")
 
             if not os.path.exists(clm_keys_path):
                 logger.error(f"CLM issue keys file not found: {clm_keys_path}")
@@ -211,9 +225,13 @@ def register_api_routes(app):
         timestamp = request.args.get('timestamp')
         ignore_period = request.args.get('ignore_period', 'false').lower() == 'true'
 
-        # Log the received parameters including ignore_period
+        # Log the received parameters including ignore_period and timestamp details
         logger.info(f"special_jql called: project={project}, chart_type={chart_type}, is_clm={is_clm}, " +
                     f"ignore_period={ignore_period}, date_from={date_from}, date_to={date_to}")
+
+        # Check if it's a dashboard timestamp
+        is_dashboard = timestamp and len(timestamp) == 8 and timestamp.isdigit()
+        logger.info(f"Timestamp: {timestamp}, Is dashboard format: {is_dashboard}")
 
         if not chart_type:
             return jsonify({
@@ -560,8 +578,6 @@ def register_api_routes(app):
                 'success': False
             }), 500
 
-    # Add these endpoints to routes/api_routes.py
-
     @app.route('/api/dashboard/data')
     def dashboard_data():
         """
@@ -572,6 +588,22 @@ def register_api_routes(app):
         try:
             # Get dashboard data
             data = get_dashboard_data()
+
+            # Ensure the latest timestamp is in the expected format (YYYYMMDD)
+            if data.get('latest_timestamp') and len(data.get('latest_timestamp', '')) != 8:
+                logger.warning(
+                    f"Latest timestamp from get_dashboard_data is not in expected format: {data.get('latest_timestamp')}")
+
+                # Try to fix it - extract the date part if possible
+                latest_date = data.get('latest_data', {}).get('date', '')
+                if latest_date:
+                    # Convert from YYYY-MM-DD to YYYYMMDD if needed
+                    if '-' in latest_date:
+                        data['latest_timestamp'] = latest_date.replace('-', '')
+                        logger.info(f"Fixed timestamp to: {data['latest_timestamp']}")
+
+            # Log the timestamp being sent to the frontend
+            logger.info(f"Sending dashboard data with latest_timestamp: {data.get('latest_timestamp')}")
 
             return jsonify({
                 'success': True,
@@ -601,6 +633,29 @@ def register_api_routes(app):
             })
         except Exception as e:
             logger.error(f"Error collecting dashboard data: {e}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+
+    @app.route('/api/dashboard/collect', methods=['POST'])
+    def trigger_dashboard_collection():
+        """
+        Manually trigger dashboard data collection
+        """
+        try:
+            from scheduler import trigger_data_collection
+
+            # Trigger the data collection
+            result = trigger_data_collection()
+
+            return jsonify({
+                'success': True,
+                'message': 'Dashboard data collection has been triggered',
+                'status': result
+            })
+        except Exception as e:
+            logger.error(f"Error triggering dashboard data collection: {e}", exc_info=True)
             return jsonify({
                 'success': False,
                 'error': str(e)

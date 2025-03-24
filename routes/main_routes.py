@@ -94,8 +94,16 @@ def register_main_routes(app):
     def dashboard():
         """Render the NBSS Dashboard page"""
         try:
-            from config import PROJECT_BUDGET
+            from config import PROJECT_BUDGET, DASHBOARD_REFRESH_INTERVAL
         except ImportError:
             PROJECT_BUDGET = 18000
+            DASHBOARD_REFRESH_INTERVAL = 3600  # Default: 1 hour in seconds
 
-        return render_template('dashboard.html', active_tab='dashboard', project_budget=PROJECT_BUDGET)
+        # Get current time for the template
+        now = datetime.now()
+
+        return render_template('dashboard.html',
+                               active_tab='dashboard',
+                               project_budget=PROJECT_BUDGET,
+                               refresh_interval=DASHBOARD_REFRESH_INTERVAL,
+                               now=now)

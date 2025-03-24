@@ -2,14 +2,66 @@
 document.addEventListener('DOMContentLoaded', function() {
     // Fetch dashboard data
     fetchDashboardData();
+
+    // Set up auto-refresh based on configuration
+    setupAutoRefresh();
+
+    // Add event listener for manual refresh button
+    const manualRefreshBtn = document.getElementById('manual-refresh');
+    if (manualRefreshBtn) {
+        manualRefreshBtn.addEventListener('click', function() {
+            console.log("Manual refresh clicked");
+            fetchDashboardData();
+        });
+    }
 });
+
+// Set up auto-refresh based on server configuration
+function setupAutoRefresh() {
+    // Get refresh interval from data attribute (in seconds)
+    const refreshInterval = parseInt(document.body.dataset.refreshInterval || '3600');
+
+    if (refreshInterval > 0) {
+        console.log(`Setting up dashboard auto-refresh every ${refreshInterval} seconds`);
+
+        // Convert to milliseconds
+        const refreshMs = refreshInterval * 1000;
+
+        // Set up the refresh timer
+        setInterval(function() {
+            console.log('Auto-refreshing dashboard data...');
+            fetchDashboardData();
+        }, refreshMs);
+    }
+}
 
 // Fetch dashboard data from the API
 function fetchDashboardData() {
+    console.log("Fetching dashboard data...");
+
+    // Show loading indicator
+    const refreshBtn = document.getElementById('manual-refresh');
+    if (refreshBtn) {
+        refreshBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
+        refreshBtn.disabled = true;
+    }
+
     fetch('/api/dashboard/data')
         .then(response => response.json())
         .then(result => {
             if (result.success) {
+                console.log("Dashboard data fetched successfully");
+                // Store the refresh interval in a data attribute
+                if (result.data.refresh_interval) {
+                    document.body.dataset.refreshInterval = result.data.refresh_interval;
+                }
+
+                // Store the latest analysis timestamp in a data attribute
+                if (result.data.latest_timestamp) {
+                    document.body.dataset.latestAnalysis = result.data.latest_timestamp;
+                    console.log("Latest analysis timestamp:", result.data.latest_timestamp);
+                }
+
                 // Initialize charts with the data
                 initTimeSpentChart(result.data.time_series);
                 initOpenTasksChart(result.data.open_tasks_data);
@@ -18,6 +70,9 @@ function fetchDashboardData() {
                 if (result.data.latest_data) {
                     updateDashboardSummary(result.data.latest_data);
                 }
+
+                // Update last refresh time
+                updateLastRefreshTime();
             } else {
                 console.error('Error fetching dashboard data:', result.error);
                 // Initialize charts with empty data
@@ -33,11 +88,32 @@ function fetchDashboardData() {
 
             // If API isn't available yet, use fallback data
             useFallbackData();
+        })
+        .finally(() => {
+            // Reset refresh button
+            if (refreshBtn) {
+                refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i>';
+                refreshBtn.disabled = false;
+            }
         });
+}
+
+// Update last refresh time indicator
+function updateLastRefreshTime() {
+    const refreshElement = document.getElementById('last-refresh-time');
+    if (refreshElement) {
+        const now = new Date();
+        const timeString = now.toLocaleTimeString();
+        refreshElement.textContent = timeString;
+    }
 }
 
 // Use fallback data if API isn't available yet
 function useFallbackData() {
+    // Get budget from the progress element data attribute
+    const progressElement = document.querySelector('.progress');
+    const budget = progressElement ? parseInt(progressElement.dataset.budget) || 18000 : 18000;
+
     // Calculate fallback data
     const today = new Date();
     const labels = [];
@@ -58,10 +134,8 @@ function useFallbackData() {
         actualData.push(actual);
 
         // Calculate projected time spent
-        // Budget = 23000 person-days, project duration = 365 days (2025)
-
+        // Project duration = 365 days (2025)
         const daysInYear = 365;
-        const budget = PROJECT_BUDGET;
         const daysPassed = Math.min(31 + 28 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + date.getDate(), 365);
         const projected = Math.round((budget / daysInYear) * daysPassed);
         projectedData.push(projected);
@@ -89,6 +163,9 @@ function useFallbackData() {
         total_time_spent_days: actualData[actualData.length - 1],
         projected_time_spent_days: projectedData[projectedData.length - 1]
     });
+
+    // Update last refresh time
+    updateLastRefreshTime();
 }
 
 // Initialize time spent chart
@@ -172,11 +249,18 @@ function initTimeSpentChart(timeSeriesData) {
                 if (elements.length > 0) {
                     const index = elements[0].index;
                     const date = data.labels[index];
-                    // Navigate to the detailed view for this date
-                    console.log(`Clicked on ${date}`);
 
-                    // For now, let's just navigate to the index page
-                    window.location.href = '/?date_from=' + date + '&date_to=' + date;
+                    // Format date to folder format (YYYYMMDD)
+                    const dateObj = new Date(date);
+                    const year = dateObj.getFullYear();
+                    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                    const day = String(dateObj.getDate()).padStart(2, '0');
+                    const folderDate = `${year}${month}${day}`;
+
+                    console.log(`Clicked on date ${date}, folder date: ${folderDate}`);
+
+                    // Navigate to the dashboard view for this date
+                    window.location.href = `/view/dashboard/${folderDate}`;
                 }
             }
         }
@@ -304,10 +388,17 @@ function generateColors(count) {
 
 // Create JQL query for open tasks in a project
 function createOpenTasksJQL(project) {
+    // Get the timestamp from the latest dashboard data - should be in format YYYYMMDD for dashboard data
+    const timestamp = document.body.getAttribute('data-latest-analysis') || '';
+
+    console.log(`Creating open tasks JQL for project: ${project}, using timestamp: ${timestamp}`);
+
     // Create request to get JQL query for open tasks in this project
-    fetch(`/jql/special?project=${encodeURIComponent(project)}&chart_type=open_tasks`)
+    fetch(`/jql/special?project=${encodeURIComponent(project)}&chart_type=open_tasks&is_clm=true&timestamp=${timestamp}`)
         .then(response => response.json())
         .then(data => {
+            console.log("Received JQL:", data.jql);
+
             // Fill modal dialog
             document.getElementById('jqlQuery').value = data.jql;
             document.getElementById('openJiraBtn').href = data.url;

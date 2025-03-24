@@ -301,3 +301,232 @@ def register_analysis_routes(app):
                     logger.error(f"Error deleting report {report_id}: {str(e)}")
 
         return redirect(url_for('index'))
+
+    # Add this to routes/analysis_routes.py
+
+    @app.route('/view/dashboard/<date_str>')
+    def view_dashboard_analysis(date_str):
+        """
+        View dashboard analysis for a specific date
+        Similar to the view_analysis function but for dashboard data
+        """
+        DASHBOARD_DIR = 'nbss_data'
+        folder_path = os.path.join(DASHBOARD_DIR, date_str)
+
+        if not os.path.exists(folder_path):
+            return "Dashboard analysis not found for this date", 404
+
+        # Load dashboard data for this date
+        data_file = os.path.join(DASHBOARD_DIR, f"{date_str}.json")
+        if not os.path.exists(data_file):
+            return "Dashboard data file not found", 404
+
+        try:
+            with open(data_file, 'r', encoding='utf-8') as f:
+                dashboard_data = json.load(f)
+        except Exception as e:
+            logger.error(f"Error reading dashboard data: {e}")
+            return f"Error reading dashboard data: {e}", 500
+
+        # Check for raw_issues.json
+        raw_issues_path = os.path.join(folder_path, 'raw_issues.json')
+        if not os.path.exists(raw_issues_path):
+            logger.error(f"Raw issues file not found: {raw_issues_path}")
+            return "Raw issues data not found", 404
+
+        # Load and process raw issues
+        try:
+            with open(raw_issues_path, 'r', encoding='utf-8') as f:
+                raw_issues = json.load(f)
+
+            # Process the raw issues data
+            filtered_issues = raw_issues.get('filtered_issues', [])
+            all_implementation_issues = raw_issues.get('all_implementation_issues', [])
+
+            # Use the Jira analyzer to process the data
+            from modules.jira_analyzer import JiraAnalyzer
+            analyzer = JiraAnalyzer()
+
+            # Process implementation issues to get a dataframe
+            df = analyzer.process_issues_data(all_implementation_issues)
+
+            # Create temporary directory for charts
+            temp_dir = os.path.join(folder_path, 'charts')
+            if not os.path.exists(temp_dir):
+                os.makedirs(temp_dir)
+
+            # Create visualizations
+            chart_paths = analyzer.create_visualizations(df, temp_dir)
+
+            # Prepare chart data for the view
+            chart_files = {}
+            for chart_type, chart_path in chart_paths.items():
+                if chart_path and os.path.exists(chart_path):
+                    # Convert absolute path to relative path
+                    rel_path = os.path.relpath(chart_path, folder_path)
+                    chart_files[chart_type] = os.path.join(date_str, rel_path)
+
+            # Create issue keys data if it doesn't exist
+            data_dir = os.path.join(folder_path, 'data')
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir)
+
+            # Calculate project counts, estimates and time spent
+            project_counts = df['project'].value_counts().to_dict()
+            project_estimates = df.groupby('project')['original_estimate_hours'].sum().to_dict()
+            project_time_spent = df.groupby('project')['time_spent_hours'].sum().to_dict()
+
+            # Calculate open tasks
+            from modules.data_processor import get_improved_open_statuses
+            open_statuses = get_improved_open_statuses(df)
+            open_tasks = df[df['status'].isin(open_statuses) & (df['time_spent_hours'] > 0)]
+            no_transitions_by_project = {}
+
+            if not open_tasks.empty:
+                no_transitions_by_project = open_tasks.groupby('project').size().to_dict()
+
+            # Extract issue keys
+            clm_issue_keys = [issue.get('key') for issue in raw_issues.get('clm_issues', []) if issue.get('key')]
+            est_issue_keys = [issue.get('key') for issue in raw_issues.get('est_issues', []) if issue.get('key')]
+            improvement_issue_keys = [issue.get('key') for issue in raw_issues.get('improvement_issues', []) if
+                                      issue.get('key')]
+            implementation_issue_keys = [issue.get('key') for issue in all_implementation_issues if issue.get('key')]
+            filtered_issue_keys = [issue.get('key') for issue in filtered_issues if issue.get('key')]
+
+            # Group issue keys by project
+            project_issue_mapping = {}
+            for issue in all_implementation_issues:
+                issue_key = issue.get('key')
+                project_key = issue.get('fields', {}).get('project', {}).get('key', '')
+                if issue_key and project_key:
+                    if project_key not in project_issue_mapping:
+                        project_issue_mapping[project_key] = []
+                    project_issue_mapping[project_key].append(issue_key)
+
+            # Prepare special charts data
+            open_tasks_issue_keys = open_tasks['issue_key'].tolist() if not open_tasks.empty else []
+            open_tasks_by_project = {}
+            for project in no_transitions_by_project:
+                project_open_tasks = open_tasks[open_tasks['project'] == project]
+                open_tasks_by_project[project] = project_open_tasks['issue_key'].tolist()
+
+            # Create chart data
+            chart_data = {
+                'project_counts': project_counts,
+                'project_estimates': project_estimates,
+                'project_time_spent': project_time_spent,
+                'projects': list(set(list(project_counts.keys()) + list(project_estimates.keys()) + list(
+                    project_time_spent.keys()))),
+                'data_source': 'clm',  # Always use CLM data source for dashboard data
+                'filter_params': {
+                    'date_from': dashboard_data.get('date'),
+                    'date_to': dashboard_data.get('date')
+                },
+                'special_charts': {
+                    'no_transitions': {
+                        'title': 'Открытые задачи со списаниями',
+                        'by_project': no_transitions_by_project,
+                        'total': len(open_tasks) if 'open_tasks' in locals() else 0,
+                        'issue_keys_by_project': open_tasks_by_project
+                    }
+                },
+                'project_issue_mapping': project_issue_mapping,
+                'clm_issue_keys': clm_issue_keys,
+                'est_issue_keys': est_issue_keys,
+                'improvement_issue_keys': improvement_issue_keys,
+                'implementation_issue_keys': implementation_issue_keys,
+                'filtered_issue_keys': filtered_issue_keys
+            }
+
+            # Save chart data
+            chart_data_path = os.path.join(data_dir, 'chart_data.json')
+            with open(chart_data_path, 'w', encoding='utf-8') as f:
+                json.dump(chart_data, f, indent=4, ensure_ascii=False)
+
+            # Save issue keys
+            keys_data = {
+                'clm_issue_keys': clm_issue_keys,
+                'est_issue_keys': est_issue_keys,
+                'improvement_issue_keys': improvement_issue_keys,
+                'implementation_issue_keys': implementation_issue_keys,
+                'filtered_issue_keys': filtered_issue_keys,
+                'open_tasks_issue_keys': open_tasks_issue_keys,
+                'project_issue_mapping': project_issue_mapping
+            }
+
+            clm_keys_path = os.path.join(data_dir, 'clm_issue_keys.json')
+            with open(clm_keys_path, 'w', encoding='utf-8') as f:
+                json.dump(keys_data, f, indent=4, ensure_ascii=False)
+
+            # Calculate summary metrics
+            total_issues = len(df)
+            total_original_estimate_hours = df['original_estimate_hours'].sum()
+            total_time_spent_hours = df['time_spent_hours'].sum()
+            projects_count = len(df['project'].unique())
+            avg_estimate_per_issue = df['original_estimate_hours'].mean() if len(df) > 0 else 0
+            avg_time_spent_per_issue = df['time_spent_hours'].mean() if len(df) > 0 else 0
+            overall_efficiency = (
+                        total_time_spent_hours / total_original_estimate_hours) if total_original_estimate_hours > 0 else 0
+
+            # Create summary data
+            summary_data = {
+                'total_issues': total_issues,
+                'total_original_estimate_hours': float(total_original_estimate_hours),
+                'total_time_spent_hours': float(total_time_spent_hours),
+                'projects_count': projects_count,
+                'avg_estimate_per_issue': float(avg_estimate_per_issue),
+                'avg_time_spent_per_issue': float(avg_time_spent_per_issue),
+                'overall_efficiency': float(overall_efficiency),
+                'no_transitions_tasks_count': len(open_tasks) if 'open_tasks' in locals() else 0,
+                'clm_issues_count': len(clm_issue_keys),
+                'est_issues_count': len(est_issue_keys),
+                'improvement_issues_count': len(improvement_issue_keys),
+                'linked_issues_count': len(implementation_issue_keys)
+            }
+
+            # Create data for display
+            analysis_data = {
+                'timestamp': date_str,
+                'display_timestamp': f"Dashboard {dashboard_data.get('date', date_str)}",
+                'total_issues': total_issues,
+                'charts': chart_files,
+                'summary': summary_data,
+                'date_from': dashboard_data.get('date'),
+                'date_to': dashboard_data.get('date'),
+                'clm_filter_id': "dashboard",  # Placeholder for dashboard data
+                'data_source': 'clm',  # Always use CLM data source
+                'chart_data': chart_data,
+                'tooltips': metrics_tooltips  # Make sure this is defined in analysis_routes.py
+            }
+
+            return render_template('view.html',
+                                   timestamp=date_str,
+                                   data=analysis_data)
+
+        except Exception as e:
+            logger.error(f"Error processing dashboard analysis: {e}", exc_info=True)
+            return f"Error processing dashboard analysis: {e}", 500
+
+    @app.route('/dashboard/<path:filename>')
+    def dashboard_files(filename):
+        """Serve files from the dashboard directory"""
+        DASHBOARD_DIR = 'nbss_data'
+        # Handle nested paths like "timestamp/chart.png"
+        parts = filename.split('/')
+
+        if len(parts) == 1:
+            # Simple filename
+            return send_from_directory(DASHBOARD_DIR, filename)
+        else:
+            # Path with directory, like "timestamp/chart.png"
+            dir_path = os.path.join(DASHBOARD_DIR, os.path.dirname(filename))
+            basename = os.path.basename(filename)
+            return send_from_directory(dir_path, basename)
+
+    # Register view_dashboard_analysis explicitly (make sure this is present)
+    app.add_url_rule('/view/dashboard/<date_str>', 'view_dashboard_analysis', view_dashboard_analysis)
+
+    # Log registered routes for debugging
+    logger.info("Registered analysis routes:")
+    for rule in app.url_map.iter_rules():
+        logger.info(f"Route: {rule}, Endpoint: {rule.endpoint}")
