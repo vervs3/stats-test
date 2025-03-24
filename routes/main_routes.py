@@ -66,7 +66,8 @@ def register_main_routes(app):
                                analysis_state=analysis_state,
                                analysis_folders=analysis_folders,
                                default_from=month_ago,
-                               default_to=today)
+                               default_to=today,
+                               active_tab='analyzer')
 
     @app.route('/status')
     def status():
@@ -87,3 +88,14 @@ def register_main_routes(app):
     def server_error(e):
         """Handle 500 errors"""
         return render_template('error.html', error=f"Server error: {str(e)}"), 500
+
+    # Add new dashboard route to routes/main_routes.py
+    @app.route('/dashboard')
+    def dashboard():
+        """Render the NBSS Dashboard page"""
+        try:
+            from config import PROJECT_BUDGET
+        except ImportError:
+            PROJECT_BUDGET = 18000
+
+        return render_template('dashboard.html', active_tab='dashboard', project_budget=PROJECT_BUDGET)

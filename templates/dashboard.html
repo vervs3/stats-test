@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block title %}NBSS Dashboard{% endblock %}
+
+{% block header %}NBSS Dashboard{% endblock %}
+
+{% block content %}
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Сводная информация</h3>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h5 class="card-title">Фактические трудозатраты</h5>
+                                    <p class="card-text display-4" id="actual-time-spent">0</p>
+                                    <p class="text-muted">человекодней</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h5 class="card-title">Прогнозные трудозатраты</h5>
+                                    <p class="card-text display-4" id="projected-time-spent">0</p>
+                                    <p class="text-muted">человекодней</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-light">
+                                <div class="card-body text-center">
+                                    <h5 class="card-title">Разница</h5>
+                                    <p class="card-text display-4" id="time-difference">0</p>
+                                    <p class="text-muted">человекодней</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-md-12">
+                            <h5>Прогресс проекта (бюджет: {{ "{:,}".format(project_budget) }} человекодней)</h5>
+                                <div class="progress" style="height: 30px;" data-budget="{{ project_budget }}">
+                                <div class="progress-bar" id="time-progress" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Трудозатраты NBSS</h3>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">График показывает фактические (красный) и прогнозные (синий) трудозатраты по дням. Нажмите на точку для перехода к подробному анализу.</p>
+                    <div class="chart-container">
+                        <canvas id="timeSpentChart" height="300"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Открытые задачи со списаниями</h3>
+                </div>
+                <div class="card-body">
+                    <p class="text-muted">Задачи в статусе Open, на которые списано время. Нажмите на столбец для просмотра задач в Jira.</p>
+                    <div class="chart-container">
+                        <canvas id="openTasksChart" height="300"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}

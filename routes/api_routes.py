@@ -559,3 +559,49 @@ def register_api_routes(app):
                 'error': str(e),
                 'success': False
             }), 500
+
+    # Add these endpoints to routes/api_routes.py
+
+    @app.route('/api/dashboard/data')
+    def dashboard_data():
+        """
+        Get dashboard data for the NBSS Dashboard
+        """
+        from modules.dashboard import get_dashboard_data
+
+        try:
+            # Get dashboard data
+            data = get_dashboard_data()
+
+            return jsonify({
+                'success': True,
+                'data': data
+            })
+        except Exception as e:
+            logger.error(f"Error getting dashboard data: {e}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+
+    @app.route('/api/dashboard/collect')
+    def collect_dashboard_data():
+        """
+        Manually trigger data collection for the NBSS Dashboard
+        """
+        from modules.dashboard import collect_daily_data
+
+        try:
+            # Collect dashboard data
+            data = collect_daily_data()
+
+            return jsonify({
+                'success': True,
+                'data': data
+            })
+        except Exception as e:
+            logger.error(f"Error collecting dashboard data: {e}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500

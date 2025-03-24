@@ -14,7 +14,14 @@
         <header class="mb-4">
             <h1>{% block header %}Анализ данных Jira{% endblock %}</h1>
             <nav class="mb-3">
-                <a href="/" class="btn btn-primary">Главная</a>
+                <ul class="nav nav-tabs">
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_tab == 'dashboard' %}active{% endif %}" href="/dashboard">NBSS Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link {% if active_tab == 'analyzer' or active_tab is not defined %}active{% endif %}" href="/">JIRA Analyzer</a>
+                    </li>
+                </ul>
             </nav>
         </header>
 

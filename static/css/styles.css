@@ -189,3 +189,38 @@
     font-weight: bold;
     color: #0dcaf0;
 }
+
+/* Обеспечение масштабирования графиков по ширине экрана */
+.chart-container {
+    position: relative;
+    width: 100% !important;
+    height: 350px;
+    overflow: hidden;
+}
+
+.chart-canvas-wrapper {
+    position: relative;
+    height: 100%;
+    width: 100%;
+}
+
+.chart-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* Медиа-запросы для адаптивности */
+@media (max-width: 768px) {
+    .chart-container {
+        height: 300px;
+    }
+}
+
+@media (max-width: 576px) {
+    .chart-container {
+        height: 250px;
+    }
+}
