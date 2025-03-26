@@ -123,18 +123,28 @@ def collect_daily_data():
             os.makedirs(data_dir)
 
         # Save raw issues in a similar format to CLM analyzer
+        # Modified: Using the same structure as Jira analyzer (filtered_issues and all_implementation_issues)
         combined_issues = {
             "filtered_issues": implementation_issues,  # Use implementation issues as filtered
+            "all_implementation_issues": implementation_issues
+        }
+
+        # Also add CLM, EST, and improvement issues within the structure
+        # but kept separately to retain full context
+        raw_data = {
+            "filtered_issues": implementation_issues,
             "all_implementation_issues": implementation_issues,
-            "clm_issues": clm_issues,
-            "est_issues": est_issues,
-            "improvement_issues": improvement_issues
+            "additional_data": {
+                "clm_issues": clm_issues,
+                "est_issues": est_issues,
+                "improvement_issues": improvement_issues
+            }
         }
 
         # Save raw issues
         raw_issues_path = os.path.join(daily_dir, 'raw_issues.json')
         with open(raw_issues_path, 'w', encoding='utf-8') as f:
-            json.dump(combined_issues, f, indent=2, ensure_ascii=False)
+            json.dump(raw_data, f, indent=2, ensure_ascii=False)
         logger.info(f"Saved raw issues data to {raw_issues_path}")
 
         # Also save issue keys to data directory for JQL generation
@@ -196,21 +206,26 @@ def collect_daily_data():
 def save_daily_data(data):
     """
     Save the daily dashboard data to a file.
+    MODIFIED: Now only saves in the folder structure to avoid duplication
 
     Args:
         data (dict): Dashboard data to save
     """
     try:
         # Create filename based on date
-        date_str = data['date']
-        filename = f"{date_str}.json"
-        filepath = os.path.join(DASHBOARD_DIR, filename)
+        date_str = data['timestamp']
 
-        # Save data to file
-        with open(filepath, 'w', encoding='utf-8') as f:
+        # Create the path to the specific date folder
+        folder_path = os.path.join(DASHBOARD_DIR, date_str)
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+
+        # Save summary file in the date folder
+        summary_path = os.path.join(folder_path, 'summary.json')
+        with open(summary_path, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
-        logger.info(f"Saved dashboard data to {filepath}")
+        logger.info(f"Saved dashboard data to {summary_path}")
     except Exception as e:
         logger.error(f"Error saving dashboard data: {e}", exc_info=True)
 
@@ -218,27 +233,46 @@ def save_daily_data(data):
 def get_dashboard_data():
     """
     Get all dashboard data for the NBSS Dashboard.
+    MODIFIED: Now properly handles folder structure and avoids duplicates
 
     Returns:
         dict: Dashboard data with time series and latest data
     """
     try:
-        # Get all data files
+        # Get all data folders in the DASHBOARD_DIR
         all_data = []
-        for filename in os.listdir(DASHBOARD_DIR):
-            if filename.endswith('.json'):
-                filepath = os.path.join(DASHBOARD_DIR, filename)
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    # Make sure the data has required fields
-                    if 'date' not in data:
-                        data['date'] = filename.split('.')[0]  # Use filename as date
+        processed_dates = set()  # To track processed dates and avoid duplicates
 
-                    # Make sure open_tasks_data exists
-                    if 'open_tasks_data' not in data:
-                        data['open_tasks_data'] = {}
+        # First, scan the directory for date folders
+        for item in os.listdir(DASHBOARD_DIR):
+            item_path = os.path.join(DASHBOARD_DIR, item)
 
-                    all_data.append(data)
+            # Only process directories with the date format (8 digits)
+            if os.path.isdir(item_path) and item.isdigit() and len(item) == 8:
+                # Look for summary.json in the folder
+                summary_path = os.path.join(item_path, 'summary.json')
+                if os.path.exists(summary_path):
+                    try:
+                        with open(summary_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+
+                            # Make sure the data has required fields
+                            if 'date' not in data:
+                                date_obj = datetime.strptime(item, '%Y%m%d')
+                                data['date'] = date_obj.strftime('%Y-%m-%d')
+
+                            # Check if we already processed this date
+                            if data['date'] not in processed_dates:
+                                processed_dates.add(data['date'])
+
+                                # Make sure open_tasks_data exists
+                                if 'open_tasks_data' not in data:
+                                    data['open_tasks_data'] = {}
+
+                                all_data.append(data)
+                                logger.info(f"Loaded dashboard data from folder: {item}")
+                    except Exception as e:
+                        logger.error(f"Error reading summary file {summary_path}: {e}")
 
         # Sort data by date
         all_data.sort(key=lambda x: x['date'])

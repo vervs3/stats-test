@@ -324,25 +324,35 @@ def register_analysis_routes(app):
             logger.error(f"Raw issues file not found: {raw_issues_path}")
             return f"Raw issues file not found for date {date_str}", 404
 
-        # Check for the JSON data file (create if missing)
-        data_file = os.path.join(DASHBOARD_DIR, f"{date_str}.json")
+        # Check for the summary.json file (create if missing)
+        summary_path = os.path.join(folder_path, 'summary.json')
         dashboard_data = None
 
-        if not os.path.exists(data_file):
-            logger.warning(f"Dashboard data file not found: {data_file}, generating from raw data")
+        if not os.path.exists(summary_path):
+            logger.warning(f"Dashboard summary file not found: {summary_path}, generating from raw data")
 
             # Generate basic dashboard data from raw issues
             try:
                 with open(raw_issues_path, 'r', encoding='utf-8') as f:
                     raw_issues = json.load(f)
 
-                    filtered_issues = raw_issues.get('filtered_issues', [])
-                    implementation_issues = raw_issues.get('all_implementation_issues', filtered_issues)
+                    # Extract issues based on the standardized format
+                    if isinstance(raw_issues, dict):
+                        filtered_issues = raw_issues.get('filtered_issues', [])
+                        implementation_issues = raw_issues.get('all_implementation_issues', filtered_issues)
 
-                    # Count CLM-related issues
-                    clm_issues = raw_issues.get('clm_issues', [])
-                    est_issues = raw_issues.get('est_issues', [])
-                    improvement_issues = raw_issues.get('improvement_issues', [])
+                        # Check for extra data in the new standardized format
+                        additional_data = raw_issues.get('additional_data', {})
+                        clm_issues = additional_data.get('clm_issues', [])
+                        est_issues = additional_data.get('est_issues', [])
+                        improvement_issues = additional_data.get('improvement_issues', [])
+                    else:
+                        # Fallback if raw_issues is a list
+                        filtered_issues = raw_issues
+                        implementation_issues = raw_issues
+                        clm_issues = []
+                        est_issues = []
+                        improvement_issues = []
 
                     # Calculate time spent
                     total_time_spent_hours = 0
@@ -369,20 +379,20 @@ def register_analysis_routes(app):
 
                     # Save for future use
                     try:
-                        with open(data_file, 'w', encoding='utf-8') as f:
+                        with open(summary_path, 'w', encoding='utf-8') as f:
                             json.dump(dashboard_data, f, indent=2, ensure_ascii=False)
-                        logger.info(f"Created dashboard data file: {data_file}")
+                        logger.info(f"Created dashboard summary file: {summary_path}")
                     except Exception as e:
                         logger.error(f"Error saving dashboard data: {e}", exc_info=True)
             except Exception as e:
                 logger.error(f"Error generating dashboard data: {e}", exc_info=True)
                 return f"Error generating dashboard data: {e}", 500
         else:
-            # Load the existing JSON data
+            # Load the existing summary file
             try:
-                with open(data_file, 'r', encoding='utf-8') as f:
+                with open(summary_path, 'r', encoding='utf-8') as f:
                     dashboard_data = json.load(f)
-                    logger.info(f"Successfully loaded dashboard data from {data_file}")
+                    logger.info(f"Successfully loaded dashboard data from {summary_path}")
             except Exception as e:
                 logger.error(f"Error reading dashboard data: {e}", exc_info=True)
                 return f"Error reading dashboard data: {e}", 500
@@ -392,10 +402,27 @@ def register_analysis_routes(app):
             with open(raw_issues_path, 'r', encoding='utf-8') as f:
                 raw_issues = json.load(f)
 
-            # Extract issues based on the file structure
+            # Extract issues based on the standardized format
             if isinstance(raw_issues, dict):
-                filtered_issues = raw_issues.get('filtered_issues', [])
-                all_implementation_issues = raw_issues.get('all_implementation_issues', filtered_issues)
+                if 'filtered_issues' in raw_issues and 'all_implementation_issues' in raw_issues:
+                    # Standard format
+                    filtered_issues = raw_issues.get('filtered_issues', [])
+                    all_implementation_issues = raw_issues.get('all_implementation_issues', filtered_issues)
+                else:
+                    # Old format or non-standard structure
+                    filtered_issues = raw_issues.get('filtered_issues', []) if 'filtered_issues' in raw_issues else []
+                    all_implementation_issues = raw_issues.get('all_implementation_issues',
+                                                               []) if 'all_implementation_issues' in raw_issues else []
+
+                    # If no standard fields found, search for values at root level
+                    if not filtered_issues and not all_implementation_issues:
+                        # Try to use any array field as implementation_issues
+                        for key, value in raw_issues.items():
+                            if isinstance(value, list) and value:
+                                all_implementation_issues = value
+                                filtered_issues = value
+                                logger.info(f"Using field '{key}' as implementation issues")
+                                break
             else:
                 # Fallback if raw_issues is a list
                 filtered_issues = raw_issues
@@ -443,19 +470,23 @@ def register_analysis_routes(app):
             if not open_tasks.empty:
                 no_transitions_by_project = open_tasks.groupby('project').size().to_dict()
 
-            # Extract issue keys from raw issues
+            # Extract issue keys from raw issues using standardized format
             clm_issue_keys = []
             est_issue_keys = []
             improvement_issue_keys = []
             implementation_issue_keys = []
             filtered_issue_keys = []
 
-            # Check if the raw_issues contains structured data
+            # Extract issue keys from the additional_data field if it exists
             if isinstance(raw_issues, dict):
-                clm_issues = raw_issues.get('clm_issues', [])
-                est_issues = raw_issues.get('est_issues', [])
-                improvement_issues = raw_issues.get('improvement_issues', [])
+                additional_data = raw_issues.get('additional_data', {})
 
+                # Extract from standardized structure
+                clm_issues = additional_data.get('clm_issues', [])
+                est_issues = additional_data.get('est_issues', [])
+                improvement_issues = additional_data.get('improvement_issues', [])
+
+                # Extract keys
                 clm_issue_keys = [issue.get('key') for issue in clm_issues if issue.get('key')]
                 est_issue_keys = [issue.get('key') for issue in est_issues if issue.get('key')]
                 improvement_issue_keys = [issue.get('key') for issue in improvement_issues if issue.get('key')]

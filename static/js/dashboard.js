@@ -1,5 +1,24 @@
 // Initialize dashboard charts
 document.addEventListener('DOMContentLoaded', function() {
+    // Add debugging - log when dashboard initializes
+    console.log("Dashboard initialization started");
+
+    // Check if the required chart elements exist
+    const timeChartElement = document.getElementById('timeSpentChart');
+    const openTasksElement = document.getElementById('openTasksChart');
+
+    if (timeChartElement) {
+        console.log("Found timeSpentChart element");
+    } else {
+        console.error("timeSpentChart element not found!");
+    }
+
+    if (openTasksElement) {
+        console.log("Found openTasksChart element");
+    } else {
+        console.error("openTasksChart element not found!");
+    }
+
     // Fetch dashboard data
     fetchDashboardData();
 
@@ -47,8 +66,13 @@ function fetchDashboardData() {
     }
 
     fetch('/api/dashboard/data')
-        .then(response => response.json())
+        .then(response => {
+            console.log("API response received, status:", response.status);
+            return response.json();
+        })
         .then(result => {
+            console.log("Dashboard API response parsed:", result);
+
             if (result.success) {
                 console.log("Dashboard data fetched successfully");
                 // Store the refresh interval in a data attribute
@@ -62,16 +86,40 @@ function fetchDashboardData() {
                     console.log("Latest analysis timestamp:", result.data.latest_timestamp);
                 }
 
-                // Initialize charts with the data
-                initTimeSpentChart(result.data.time_series);
+                // Check if time series data is valid
+                if (result.data.time_series && result.data.time_series.dates &&
+                    result.data.time_series.dates.length > 0) {
+                    console.log("Time series data received:", result.data.time_series);
+                    // Initialize charts with the data
+                    initTimeSpentChart(result.data.time_series);
+                } else {
+                    console.warn("Empty or invalid time series data received");
+                    console.log("Using fallback data for time spent chart");
+                    // Use fallback data if time series is empty
+                    const fallbackTimeSeriesData = createFallbackTimeSeriesData();
+                    initTimeSpentChart(fallbackTimeSeriesData);
+                }
 
-                // Explicitly log the open tasks data
+                // Check if open tasks data is valid
                 console.log("Open tasks data from API:", result.data.open_tasks_data);
-                initOpenTasksChart(result.data.open_tasks_data);
+                if (result.data.open_tasks_data &&
+                    Object.keys(result.data.open_tasks_data).length > 0) {
+                    initOpenTasksChart(result.data.open_tasks_data);
+                } else {
+                    console.warn("Empty or invalid open tasks data received");
+                    // Use fallback data for open tasks
+                    const fallbackOpenTasksData = createFallbackOpenTasksData();
+                    initOpenTasksChart(fallbackOpenTasksData);
+                }
 
                 // Update dashboard summary if needed
                 if (result.data.latest_data) {
+                    console.log("Latest data for summary:", result.data.latest_data);
                     updateDashboardSummary(result.data.latest_data);
+                } else {
+                    console.warn("No latest_data field found in API response");
+                    // Use fallback summary data
+                    updateDashboardSummary(createFallbackSummaryData());
                 }
 
                 // Update last refresh time
@@ -79,17 +127,12 @@ function fetchDashboardData() {
             } else {
                 console.error('Error fetching dashboard data:', result.error);
                 // Initialize charts with empty data
-                initTimeSpentChart(null);
-                initOpenTasksChart(null);
+                useFallbackData();
             }
         })
         .catch(error => {
             console.error('Error fetching dashboard data:', error);
             // Initialize charts with empty data
-            initTimeSpentChart(null);
-            initOpenTasksChart(null);
-
-            // If API isn't available yet, use fallback data
             useFallbackData();
         })
         .finally(() => {
@@ -101,23 +144,9 @@ function fetchDashboardData() {
         });
 }
 
-// Update last refresh time indicator
-function updateLastRefreshTime() {
-    const refreshElement = document.getElementById('last-refresh-time');
-    if (refreshElement) {
-        const now = new Date();
-        const timeString = now.toLocaleTimeString();
-        refreshElement.textContent = timeString;
-    }
-}
-
-// Use fallback data if API isn't available yet
-function useFallbackData() {
-    // Get budget from the progress element data attribute
-    const progressElement = document.querySelector('.progress');
-    const budget = progressElement ? parseInt(progressElement.dataset.budget) || 18000 : 18000;
-
-    // Calculate fallback data
+// Generate fallback time series data
+function createFallbackTimeSeriesData() {
+    console.log("Creating fallback time series data");
     const today = new Date();
     const labels = [];
     const actualData = [];
@@ -132,40 +161,79 @@ function useFallbackData() {
         const dateStr = date.toISOString().split('T')[0];
         labels.push(dateStr);
 
-        // Generate some random actual time spent data (increasing trend)
+        // Generate increasing values for actual time spent
         const actual = Math.round(500 + i * 20 + Math.random() * 50);
         actualData.push(actual);
 
-        // Calculate projected time spent based on fixed budget of 18000
-        // Project duration = 365 days (2025)
-        const daysInYear = 365;
-        const daysPassed = Math.min(31 + 28 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + date.getDate(), 365);
-        const projected = Math.round((budget / daysInYear) * daysPassed);
+        // Generate slightly higher values for projected time spent
+        const projected = Math.round(actual * 1.1);
         projectedData.push(projected);
     }
 
-    // Initialize charts with fallback data
-    initTimeSpentChart({
+    return {
         dates: labels,
         actual_time_spent: actualData,
         projected_time_spent: projectedData
-    });
+    };
+}
 
-    // Fallback open tasks data
-    const openTasksData = {
+// Generate fallback open tasks data
+function createFallbackOpenTasksData() {
+    return {
         'NBSSPORTAL': 15,
         'UDB': 10,
         'CHM': 7,
         'NUS': 5,
         'ATS': 3
     };
+}
+
+// Generate fallback summary data
+function createFallbackSummaryData() {
+    return {
+        total_time_spent_days: 980,
+        projected_time_spent_days: 1050,
+        days_passed: 85,
+        total_working_days: 252
+    };
+}
+
+// Update last refresh time indicator
+function updateLastRefreshTime() {
+    const refreshElement = document.getElementById('last-refresh-time');
+    if (refreshElement) {
+        const now = new Date();
+        const timeString = now.toLocaleTimeString();
+        refreshElement.textContent = timeString;
+    }
+}
+
+// Use fallback data if API isn't available yet
+function useFallbackData() {
+    console.log("Using fallback data for all dashboard elements");
+
+    // Get budget from the progress element data attribute
+    const progressElement = document.querySelector('.progress');
+    const budget = progressElement ? parseInt(progressElement.dataset.budget) || 18000 : 18000;
+
+    // Use fallback time series data
+    const timeSeriesData = createFallbackTimeSeriesData();
+    initTimeSpentChart(timeSeriesData);
+
+    // Use fallback open tasks data
+    const openTasksData = createFallbackOpenTasksData();
     initOpenTasksChart(openTasksData);
 
-    // Update summary with fallback data
-    updateDashboardSummary({
-        total_time_spent_days: actualData[actualData.length - 1],
-        projected_time_spent_days: projectedData[projectedData.length - 1]
-    });
+    // Create fallback summary data
+    const summaryData = {
+        total_time_spent_days: timeSeriesData.actual_time_spent[timeSeriesData.actual_time_spent.length - 1],
+        projected_time_spent_days: timeSeriesData.projected_time_spent[timeSeriesData.projected_time_spent.length - 1],
+        days_passed: 85,  // Example value
+        total_working_days: 252  // Example value
+    };
+
+    // Update the summary with fallback data
+    updateDashboardSummary(summaryData);
 
     // Update last refresh time
     updateLastRefreshTime();
@@ -173,7 +241,28 @@ function useFallbackData() {
 
 // Initialize time spent chart
 function initTimeSpentChart(timeSeriesData) {
-    const ctx = document.getElementById('timeSpentChart').getContext('2d');
+    console.log("Initializing time spent chart with data:", timeSeriesData);
+
+    const chartElement = document.getElementById('timeSpentChart');
+    if (!chartElement) {
+        console.error("Time spent chart element not found!");
+        return;
+    }
+
+    // Try-catch to handle potential Canvas errors
+    let ctx;
+    try {
+        ctx = chartElement.getContext('2d');
+    } catch (error) {
+        console.error("Error getting chart context:", error);
+        return;
+    }
+
+    // Clear any existing chart
+    if (window.timeSpentChart) {
+        console.log("Destroying existing time spent chart");
+        window.timeSpentChart.destroy();
+    }
 
     // Get budget from the progress element
     const progressElement = document.querySelector('.progress');
@@ -189,9 +278,40 @@ function initTimeSpentChart(timeSeriesData) {
 
     // Use real data if available
     if (timeSeriesData && timeSeriesData.dates && timeSeriesData.dates.length > 0) {
-        labels = timeSeriesData.dates;
-        actualData = timeSeriesData.actual_time_spent;
-        projectedData = timeSeriesData.projected_time_spent;
+        // Log the received data
+        console.log("Processing time series data:", {
+            dates: timeSeriesData.dates,
+            actual: timeSeriesData.actual_time_spent,
+            projected: timeSeriesData.projected_time_spent
+        });
+
+        // Check for and remove duplicate dates
+        const uniqueDates = new Map();
+        for (let i = 0; i < timeSeriesData.dates.length; i++) {
+            // Ensure we have valid data
+            if (timeSeriesData.dates[i] &&
+                typeof timeSeriesData.actual_time_spent[i] !== 'undefined' &&
+                typeof timeSeriesData.projected_time_spent[i] !== 'undefined') {
+
+                const date = timeSeriesData.dates[i];
+                // Only use the most recent data point for each date
+                uniqueDates.set(date, {
+                    actual: timeSeriesData.actual_time_spent[i],
+                    projected: timeSeriesData.projected_time_spent[i]
+                });
+            }
+        }
+
+        // Convert back to arrays
+        labels = Array.from(uniqueDates.keys());
+        actualData = labels.map(date => uniqueDates.get(date).actual);
+        projectedData = labels.map(date => uniqueDates.get(date).projected);
+
+        console.log("Prepared chart data:", {
+            dates: labels,
+            actual: actualData,
+            projected: projectedData
+        });
 
         // Calculate trend for forecast to the end of 2025
         if (actualData.length >= 2) {
@@ -219,45 +339,52 @@ function initTimeSpentChart(timeSeriesData) {
                 sumXX += xValues[i] * xValues[i];
             }
 
-            const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-            const intercept = (sumY - slope * sumX) / n;
+            // Check for division by zero
+            if (n * sumXX - sumX * sumX !== 0) {
+                const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+                const intercept = (sumY - slope * sumX) / n;
 
-            console.log(`Linear regression: y = ${slope.toFixed(2)}x + ${intercept.toFixed(2)}`);
+                console.log(`Linear regression: y = ${slope.toFixed(2)}x + ${intercept.toFixed(2)}`);
 
-            // Create forecast data through the end of 2025
-            if (slope > 0) {  // Only forecast if we have a positive trend
-                // Start from the last actual data point
-                const lastActualDate = new Date(labels[labels.length - 1]);
-                const lastActualValue = actualData[actualData.length - 1];
+                // Create forecast data through the end of 2025
+                if (slope > 0) {  // Only forecast if we have a positive trend
+                    // Start from the last actual data point
+                    const lastActualDate = new Date(labels[labels.length - 1]);
+                    const lastActualValue = actualData[actualData.length - 1];
 
-                // End date (December 31, 2025)
-                const endDate = new Date('2025-12-31');
+                    // End date (December 31, 2025)
+                    const endDate = new Date('2025-12-31');
 
-                // Generate forecast data points
-                let currentDate = new Date(lastActualDate);
+                    // Generate forecast data points
+                    let currentDate = new Date(lastActualDate);
 
-                // Copy the last actual data point to start the forecast
-                forecastLabels.push(labels[labels.length - 1]);
-                forecastData.push(lastActualValue);
+                    // Copy the last actual data point to start the forecast
+                    forecastLabels.push(labels[labels.length - 1]);
+                    forecastData.push(lastActualValue);
 
-                // Advance to the next day
-                currentDate.setDate(currentDate.getDate() + 1);
+                    // Advance to the next day
+                    currentDate.setDate(currentDate.getDate() + 1);
 
-                while (currentDate <= endDate) {
-                    const dateStr = currentDate.toISOString().split('T')[0];
+                    while (currentDate <= endDate) {
+                        const dateStr = currentDate.toISOString().split('T')[0];
 
-                    // Calculate forecast value using the regression model
-                    const daysSinceFirst = Math.round((currentDate - firstDate) / (1000 * 60 * 60 * 24));
-                    const forecastValue = slope * daysSinceFirst + intercept;
+                        // Calculate forecast value using the regression model
+                        const daysSinceFirst = Math.round((currentDate - firstDate) / (1000 * 60 * 60 * 24));
+                        const forecastValue = slope * daysSinceFirst + intercept;
 
-                    forecastLabels.push(dateStr);
-                    forecastData.push(forecastValue);
+                        forecastLabels.push(dateStr);
+                        forecastData.push(forecastValue);
 
-                    // For performance reasons, add weekly points instead of daily for long forecasts
-                    currentDate.setDate(currentDate.getDate() + 7);
+                        // For performance reasons, add weekly points instead of daily for long forecasts
+                        currentDate.setDate(currentDate.getDate() + 7);
+                    }
                 }
+            } else {
+                console.warn("Cannot calculate regression - division by zero");
             }
         }
+    } else {
+        console.warn("No valid time series data provided to chart");
     }
 
     // Prepare final data for the chart
@@ -315,7 +442,7 @@ function initTimeSpentChart(timeSeriesData) {
                 // Calculate days passed since Jan 1, 2025
                 const daysPassed = Math.round((currentDate - startDate) / (1000 * 60 * 60 * 24)) + 1; // +1 to include Jan 1
 
-                // Linear projection based on 18000 budget and days in 2025
+                // Linear projection based on budget and days in 2025
                 const projected = (totalBudget / totalDays) * daysPassed;
                 budgetProjectedData.push(projected);
             }
@@ -368,82 +495,88 @@ function initTimeSpentChart(timeSeriesData) {
         });
     }
 
-    const timeSpentChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: combinedLabels,
-            datasets: datasets
-        },
-        options: {
-            responsive: true,
-            scales: {
-                x: {
-                    display: true,
-                    title: {
+    try {
+        console.log("Creating time spent chart with datasets:", datasets);
+        window.timeSpentChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: combinedLabels,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: {
                         display: true,
-                        text: 'Дата'
+                        title: {
+                            display: true,
+                            text: 'Дата'
+                        },
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45,
+                            // Show fewer ticks for readability with extended dates
+                            maxTicksLimit: 20
+                        }
                     },
-                    ticks: {
-                        maxRotation: 45,
-                        minRotation: 45,
-                        // Show fewer ticks for readability with extended dates
-                        maxTicksLimit: 20
+                    y: {
+                        display: true,
+                        title: {
+                            display: true,
+                            text: 'Человекодни'
+                        },
+                        beginAtZero: true
                     }
                 },
-                y: {
-                    display: true,
-                    title: {
-                        display: true,
-                        text: 'Человекодни'
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.dataset.label || '';
+                                const value = context.parsed.y;
+                                if (value === null) return '';
+                                return `${label}: ${value.toFixed(0)} человекодней`;
+                            }
+                        }
                     },
-                    beginAtZero: true
-                }
-            },
-            plugins: {
-                tooltip: {
-                    callbacks: {
-                        label: function(context) {
-                            const label = context.dataset.label || '';
-                            const value = context.parsed.y;
-                            if (value === null) return '';
-                            return `${label}: ${value.toFixed(0)} человекодней`;
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            boxWidth: 10
                         }
                     }
                 },
-                legend: {
-                    position: 'top',
-                    labels: {
-                        usePointStyle: true,
-                        boxWidth: 10
-                    }
-                }
-            },
-            onClick: function(e, elements) {
-                if (elements.length > 0) {
-                    const index = elements[0].index;
-                    const date = combinedLabels[index];
+                onClick: function(e, elements) {
+                    if (elements.length > 0) {
+                        const index = elements[0].index;
+                        const date = combinedLabels[index];
 
-                    // Format date to folder format (YYYYMMDD)
-                    const dateObj = new Date(date);
-                    const year = dateObj.getFullYear();
-                    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-                    const day = String(dateObj.getDate()).padStart(2, '0');
-                    const folderDate = `${year}${month}${day}`;
+                        // Format date to folder format (YYYYMMDD)
+                        const dateObj = new Date(date);
+                        const year = dateObj.getFullYear();
+                        const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                        const day = String(dateObj.getDate()).padStart(2, '0');
+                        const folderDate = `${year}${month}${day}`;
 
-                    console.log(`Clicked on date ${date}, folder date: ${folderDate}`);
+                        console.log(`Clicked on date ${date}, folder date: ${folderDate}`);
 
-                    // Only navigate if we have data for this date (not a future date)
-                    if (index < labels.length) {
-                        // Navigate to the dashboard view for this date
-                        window.location.href = `/view/dashboard/${folderDate}`;
+                        // Only navigate if we have data for this date (not a future date)
+                        if (index < labels.length) {
+                            // Navigate to the dashboard view for this date
+                            window.location.href = `/view/dashboard/${folderDate}`;
+                        }
                     }
                 }
             }
-        }
-    });
+        });
+        console.log("Time spent chart created successfully");
+    } catch (error) {
+        console.error("Error creating time spent chart:", error);
+    }
 }
 
-/// Initialize open tasks chart
+// Initialize open tasks chart
 function initOpenTasksChart(openTasksData) {
     console.log("Initializing open tasks chart with data:", openTasksData);
     const chartElement = document.getElementById('openTasksChart');
@@ -535,6 +668,7 @@ function initOpenTasksChart(openTasksData) {
     }
 
     try {
+        console.log("Creating open tasks chart");
         // Create new chart and store reference on the element
         chartElement.chart = new Chart(ctx, {
             type: 'bar',
@@ -663,17 +797,22 @@ function createOpenTasksJQL(project) {
 
 // Update dashboard summary with latest data
 function updateDashboardSummary(latestData) {
+    console.log("Updating dashboard summary with data:", latestData);
+
     // If we have summary elements on the page, update them
     const actualElement = document.getElementById('actual-time-spent');
     if (actualElement) {
-        actualElement.textContent = Math.round(latestData.total_time_spent_days).toLocaleString();
+        const actualValue = Math.round(latestData.total_time_spent_days || 0);
+        actualElement.textContent = actualValue.toLocaleString();
+        console.log(`Updated actual time spent to ${actualValue}`);
+    } else {
+        console.error("actual-time-spent element not found!");
     }
 
     // Get the budget from the progress element
     const progressElement = document.getElementById('time-progress');
-    const budget = progressElement ?
-        parseInt(progressElement.closest('.progress').dataset.budget) || 18000 :
-        18000;
+    const progressContainer = progressElement ? progressElement.closest('.progress') : null;
+    const budget = progressContainer ? parseInt(progressContainer.dataset.budget) || 18000 : 18000;
 
     // Calculate our own projected value based on current date and 2025 timeline
     const projectedElement = document.getElementById('projected-time-spent');
@@ -715,6 +854,8 @@ function updateDashboardSummary(latestData) {
         // Log the calculation details
         console.log(`Projected value calculation: ${projectedValue} based on ${budget} budget`);
         console.log(`Date info: Today=${today.toISOString().split('T')[0]}, startDate=2025-01-01, using ${totalDays} days`);
+    } else {
+        console.error("projected-time-spent element not found!");
     }
 
     // Recalculate the difference based on our newly calculated projected value
@@ -738,6 +879,8 @@ function updateDashboardSummary(latestData) {
         }
 
         console.log(`Difference calculation: ${difference} (${projectedValue} - ${actualValue})`);
+    } else {
+        console.error("time-difference element not found!");
     }
 
     // Update progress bar
@@ -749,5 +892,7 @@ function updateDashboardSummary(latestData) {
         progressElement.textContent = `${Math.round(progress)}%`;
 
         console.log(`Progress bar: ${progress.toFixed(2)}% (${actualValue}/${budget})`);
+    } else {
+        console.error("time-progress element not found!");
     }
 }
