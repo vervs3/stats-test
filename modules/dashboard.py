@@ -230,6 +230,14 @@ def get_dashboard_data():
                 filepath = os.path.join(DASHBOARD_DIR, filename)
                 with open(filepath, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                    # Make sure the data has required fields
+                    if 'date' not in data:
+                        data['date'] = filename.split('.')[0]  # Use filename as date
+
+                    # Make sure open_tasks_data exists
+                    if 'open_tasks_data' not in data:
+                        data['open_tasks_data'] = {}
+
                     all_data.append(data)
 
         # Sort data by date
@@ -250,16 +258,20 @@ def get_dashboard_data():
         # Create time series data
         time_series = {
             'dates': [data['date'] for data in all_data],
-            'actual_time_spent': [data['total_time_spent_days'] for data in all_data],
-            'projected_time_spent': [data['projected_time_spent_days'] for data in all_data]
+            'actual_time_spent': [data.get('total_time_spent_days', 0) for data in all_data],
+            'projected_time_spent': [data.get('projected_time_spent_days', 0) for data in all_data]
         }
 
-        # Get latest open tasks data
-        open_tasks_data = latest_data['open_tasks_data'] if latest_data else {}
+        # Get latest open tasks data - handle missing keys safely
+        open_tasks_data = {}
+        if latest_data:
+            open_tasks_data = latest_data.get('open_tasks_data', {})
 
         # Get refresh interval from latest data or use the default
         refresh_interval = latest_data.get('refresh_interval',
                                            DASHBOARD_REFRESH_INTERVAL) if latest_data else DASHBOARD_REFRESH_INTERVAL
+
+        logger.info(f"Returning dashboard data with latest_timestamp: {latest_date}")
 
         return {
             'time_series': time_series,

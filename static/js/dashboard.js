@@ -64,6 +64,9 @@ function fetchDashboardData() {
 
                 // Initialize charts with the data
                 initTimeSpentChart(result.data.time_series);
+
+                // Explicitly log the open tasks data
+                console.log("Open tasks data from API:", result.data.open_tasks_data);
                 initOpenTasksChart(result.data.open_tasks_data);
 
                 // Update dashboard summary if needed
@@ -133,7 +136,7 @@ function useFallbackData() {
         const actual = Math.round(500 + i * 20 + Math.random() * 50);
         actualData.push(actual);
 
-        // Calculate projected time spent
+        // Calculate projected time spent based on fixed budget of 18000
         // Project duration = 365 days (2025)
         const daysInYear = 365;
         const daysPassed = Math.min(31 + 28 + 31 + 30 + 31 + 30 + 31 + 31 + 30 + 31 + date.getDate(), 365);
@@ -150,11 +153,11 @@ function useFallbackData() {
 
     // Fallback open tasks data
     const openTasksData = {
-        'Project A': 12,
-        'Project B': 19,
-        'Project C': 8,
-        'Project D': 15,
-        'Project E': 7
+        'NBSSPORTAL': 15,
+        'UDB': 10,
+        'CHM': 7,
+        'NUS': 5,
+        'ATS': 3
     };
     initOpenTasksChart(openTasksData);
 
@@ -172,49 +175,205 @@ function useFallbackData() {
 function initTimeSpentChart(timeSeriesData) {
     const ctx = document.getElementById('timeSpentChart').getContext('2d');
 
+    // Get budget from the progress element
+    const progressElement = document.querySelector('.progress');
+    const totalBudget = progressElement ? parseInt(progressElement.dataset.budget) || 18000 : 18000;
+    console.log(`Using total budget: ${totalBudget} for projections`);
+
     // Default empty data
     let labels = [];
     let actualData = [];
     let projectedData = [];
+    let forecastData = [];
+    let forecastLabels = [];
 
     // Use real data if available
     if (timeSeriesData && timeSeriesData.dates && timeSeriesData.dates.length > 0) {
         labels = timeSeriesData.dates;
         actualData = timeSeriesData.actual_time_spent;
         projectedData = timeSeriesData.projected_time_spent;
+
+        // Calculate trend for forecast to the end of 2025
+        if (actualData.length >= 2) {
+            // Calculate average daily rate of change using linear regression
+            // This is more robust than simple differences
+            const xValues = [];
+            const yValues = [];
+
+            // Convert dates to numerical values (days since first date)
+            const firstDate = new Date(labels[0]);
+            for (let i = 0; i < labels.length; i++) {
+                const currentDate = new Date(labels[i]);
+                const daysDiff = Math.round((currentDate - firstDate) / (1000 * 60 * 60 * 24));
+                xValues.push(daysDiff);
+                yValues.push(actualData[i]);
+            }
+
+            // Calculate linear regression (slope)
+            const n = xValues.length;
+            let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+            for (let i = 0; i < n; i++) {
+                sumX += xValues[i];
+                sumY += yValues[i];
+                sumXY += xValues[i] * yValues[i];
+                sumXX += xValues[i] * xValues[i];
+            }
+
+            const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+            const intercept = (sumY - slope * sumX) / n;
+
+            console.log(`Linear regression: y = ${slope.toFixed(2)}x + ${intercept.toFixed(2)}`);
+
+            // Create forecast data through the end of 2025
+            if (slope > 0) {  // Only forecast if we have a positive trend
+                // Start from the last actual data point
+                const lastActualDate = new Date(labels[labels.length - 1]);
+                const lastActualValue = actualData[actualData.length - 1];
+
+                // End date (December 31, 2025)
+                const endDate = new Date('2025-12-31');
+
+                // Generate forecast data points
+                let currentDate = new Date(lastActualDate);
+
+                // Copy the last actual data point to start the forecast
+                forecastLabels.push(labels[labels.length - 1]);
+                forecastData.push(lastActualValue);
+
+                // Advance to the next day
+                currentDate.setDate(currentDate.getDate() + 1);
+
+                while (currentDate <= endDate) {
+                    const dateStr = currentDate.toISOString().split('T')[0];
+
+                    // Calculate forecast value using the regression model
+                    const daysSinceFirst = Math.round((currentDate - firstDate) / (1000 * 60 * 60 * 24));
+                    const forecastValue = slope * daysSinceFirst + intercept;
+
+                    forecastLabels.push(dateStr);
+                    forecastData.push(forecastValue);
+
+                    // For performance reasons, add weekly points instead of daily for long forecasts
+                    currentDate.setDate(currentDate.getDate() + 7);
+                }
+            }
+        }
     }
 
-    const data = {
-        labels: labels,
-        datasets: [
-            {
-                label: 'Фактические трудозатраты',
-                data: actualData,
-                backgroundColor: 'rgba(255, 99, 132, 0.2)',
-                borderColor: 'rgba(255, 99, 132, 1)',
-                borderWidth: 1,
-                pointBackgroundColor: 'rgba(255, 99, 132, 1)',
-                pointBorderColor: '#fff',
-                pointRadius: 5,
-                pointHoverRadius: 7
-            },
-            {
-                label: 'Прогнозные трудозатраты',
-                data: projectedData,
-                backgroundColor: 'rgba(54, 162, 235, 0.2)',
-                borderColor: 'rgba(54, 162, 235, 1)',
-                borderWidth: 1,
-                pointBackgroundColor: 'rgba(54, 162, 235, 1)',
-                pointBorderColor: '#fff',
-                pointRadius: 5,
-                pointHoverRadius: 7
+    // Prepare final data for the chart
+    // We need to combine the actual data with the forecast
+    // For the forecast dataset, we'll have null values for the historical period
+    // and then the forecast values for the future period
+
+    // Create a combined labels array (avoiding duplicates)
+    const combinedLabels = [...labels];
+
+    // Add future dates from forecast (excluding the first one which overlaps)
+    for (let i = 1; i < forecastLabels.length; i++) {
+        combinedLabels.push(forecastLabels[i]);
+    }
+
+    // Create datasets
+    const datasets = [
+        {
+            label: 'Фактические трудозатраты',
+            data: [...actualData, ...Array(forecastLabels.length - 1).fill(null)],
+            backgroundColor: 'rgba(255, 99, 132, 0.2)',
+            borderColor: 'rgba(255, 99, 132, 1)',
+            borderWidth: 1,
+            pointBackgroundColor: 'rgba(255, 99, 132, 1)',
+            pointBorderColor: '#fff',
+            pointRadius: 5,
+            pointHoverRadius: 7
+        }
+    ];
+
+    // Add projected time spent based on budget - STARTING FROM JAN 1, 2025
+    // Create new array for budget-based projected time spent
+    const budgetProjectedData = [];
+
+    if (combinedLabels.length > 0) {
+        // Start date for projection (Jan 1, 2025)
+        const startDate = new Date('2025-01-01');
+        // End date for the project (Dec 31, 2025)
+        const endDate = new Date('2025-12-31');
+
+        // Calculate total days in 2025
+        const totalDays = Math.round((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1; // +1 to include Dec 31
+
+        // For each date, calculate expected spend based on linear budget consumption
+        for (let i = 0; i < combinedLabels.length; i++) {
+            const currentDate = new Date(combinedLabels[i]);
+
+            // If date is before 2025, use null (no projection data)
+            if (currentDate < startDate) {
+                budgetProjectedData.push(null);
+            } else if (currentDate > endDate) {
+                // If date is after 2025, use the full budget
+                budgetProjectedData.push(totalBudget);
+            } else {
+                // Calculate days passed since Jan 1, 2025
+                const daysPassed = Math.round((currentDate - startDate) / (1000 * 60 * 60 * 24)) + 1; // +1 to include Jan 1
+
+                // Linear projection based on 18000 budget and days in 2025
+                const projected = (totalBudget / totalDays) * daysPassed;
+                budgetProjectedData.push(projected);
             }
-        ]
-    };
+        }
+
+        // Add the budget-based projection to datasets
+        datasets.push({
+            label: 'Прогнозные трудозатраты',
+            data: budgetProjectedData,
+            backgroundColor: 'rgba(54, 162, 235, 0.2)',
+            borderColor: 'rgba(54, 162, 235, 1)',
+            borderWidth: 1,
+            pointBackgroundColor: 'rgba(54, 162, 235, 1)',
+            pointBorderColor: '#fff',
+            pointRadius: 0, // No points to reduce visual clutter
+            pointHoverRadius: 7
+        });
+    } else if (projectedData.length > 0) {
+        // Fallback to original projected data if no combined labels
+        datasets.push({
+            label: 'Прогнозные трудозатраты',
+            data: [...projectedData, ...Array(forecastLabels.length - 1).fill(null)],
+            backgroundColor: 'rgba(54, 162, 235, 0.2)',
+            borderColor: 'rgba(54, 162, 235, 1)',
+            borderWidth: 1,
+            pointBackgroundColor: 'rgba(54, 162, 235, 1)',
+            pointBorderColor: '#fff',
+            pointRadius: 5,
+            pointHoverRadius: 7
+        });
+    }
+
+    // Add forecast dataset if we have forecast data
+    if (forecastData.length > 0) {
+        // Create an array of nulls for historical period except the last point
+        const forecastDataWithNulls = Array(actualData.length - 1).fill(null);
+        // Add the actual forecast data
+        forecastDataWithNulls.push(...forecastData);
+
+        datasets.push({
+            label: 'Прогноз до конца 2025',
+            data: forecastDataWithNulls,
+            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+            borderColor: 'rgba(75, 192, 192, 1)',
+            borderWidth: 1,
+            borderDash: [5, 5], // Dashed line for forecast
+            pointRadius: 0, // No points for the forecast line
+            pointHoverRadius: 3,
+            fill: false // Don't fill area under the line
+        });
+    }
 
     const timeSpentChart = new Chart(ctx, {
         type: 'line',
-        data: data,
+        data: {
+            labels: combinedLabels,
+            datasets: datasets
+        },
         options: {
             responsive: true,
             scales: {
@@ -223,6 +382,12 @@ function initTimeSpentChart(timeSeriesData) {
                     title: {
                         display: true,
                         text: 'Дата'
+                    },
+                    ticks: {
+                        maxRotation: 45,
+                        minRotation: 45,
+                        // Show fewer ticks for readability with extended dates
+                        maxTicksLimit: 20
                     }
                 },
                 y: {
@@ -240,15 +405,23 @@ function initTimeSpentChart(timeSeriesData) {
                         label: function(context) {
                             const label = context.dataset.label || '';
                             const value = context.parsed.y;
+                            if (value === null) return '';
                             return `${label}: ${value.toFixed(0)} человекодней`;
                         }
+                    }
+                },
+                legend: {
+                    position: 'top',
+                    labels: {
+                        usePointStyle: true,
+                        boxWidth: 10
                     }
                 }
             },
             onClick: function(e, elements) {
                 if (elements.length > 0) {
                     const index = elements[0].index;
-                    const date = data.labels[index];
+                    const date = combinedLabels[index];
 
                     // Format date to folder format (YYYYMMDD)
                     const dateObj = new Date(date);
@@ -259,33 +432,87 @@ function initTimeSpentChart(timeSeriesData) {
 
                     console.log(`Clicked on date ${date}, folder date: ${folderDate}`);
 
-                    // Navigate to the dashboard view for this date
-                    window.location.href = `/view/dashboard/${folderDate}`;
+                    // Only navigate if we have data for this date (not a future date)
+                    if (index < labels.length) {
+                        // Navigate to the dashboard view for this date
+                        window.location.href = `/view/dashboard/${folderDate}`;
+                    }
                 }
             }
         }
     });
 }
 
-// Initialize open tasks chart
+/// Initialize open tasks chart
 function initOpenTasksChart(openTasksData) {
-    const ctx = document.getElementById('openTasksChart').getContext('2d');
+    console.log("Initializing open tasks chart with data:", openTasksData);
+    const chartElement = document.getElementById('openTasksChart');
+
+    // Exit if chart element is not found
+    if (!chartElement) {
+        console.error("Open tasks chart element not found!");
+        return;
+    }
+
+    // Get context (using try-catch to handle potential errors)
+    let ctx;
+    try {
+        ctx = chartElement.getContext('2d');
+    } catch (error) {
+        console.error("Error getting chart context:", error);
+        return;
+    }
 
     // Default empty data
     let labels = [];
     let data = [];
 
-    // Use real data if available
-    if (openTasksData && Object.keys(openTasksData).length > 0) {
-        // Sort projects by number of open tasks (descending)
-        const sortedProjects = Object.entries(openTasksData)
-            .sort((a, b) => b[1] - a[1]);
+    // Validate the openTasksData structure carefully
+    const isValidData = openTasksData &&
+                      typeof openTasksData === 'object' &&
+                      !Array.isArray(openTasksData) &&
+                      openTasksData !== null &&
+                      Object.keys(openTasksData).length > 0;
 
-        // Take top 20 projects
-        const topProjects = sortedProjects.slice(0, 20);
+    console.log("Is open tasks data valid?", isValidData);
 
-        labels = topProjects.map(item => item[0]);
-        data = topProjects.map(item => item[1]);
+    // Use real data if available and valid
+    if (isValidData) {
+        console.log("Using real open tasks data, keys:", Object.keys(openTasksData));
+
+        try {
+            // Convert object to entries and sort by value (descending)
+            const entries = Object.entries(openTasksData);
+            console.log("Data entries:", entries);
+
+            if (entries.length > 0) {
+                // Sort projects by hours spent (descending)
+                const sortedProjects = entries.sort((a, b) => b[1] - a[1]);
+                console.log("Sorted projects:", sortedProjects);
+
+                // Use ALL projects - don't limit to 20 or any number
+                labels = sortedProjects.map(item => item[0]);
+                data = sortedProjects.map(item => typeof item[1] === 'number' ? item[1] : 0);
+
+                console.log(`Final labels (${labels.length} projects):`, labels);
+                console.log(`Final data:`, data);
+            } else {
+                console.log("No entries in openTasksData, using fallback");
+                // Fall back to defaults if no entries
+                labels = ['TUDS', 'DMS', 'UMNP', 'NBSSPORTAL', 'GUS', 'CSM', 'SSO', 'UDB', 'CHM', 'LIS', 'APC'];
+                data = [2671, 1879, 443, 374, 133, 115, 93, 32, 21, 9, 5];
+            }
+        } catch (error) {
+            console.error("Error processing open tasks data:", error);
+            // Fall back to defaults if processing fails
+            labels = ['TUDS', 'DMS', 'UMNP', 'NBSSPORTAL', 'GUS', 'CSM', 'SSO', 'UDB', 'CHM', 'LIS', 'APC'];
+            data = [2671, 1879, 443, 374, 133, 115, 93, 32, 21, 9, 5];
+        }
+    } else {
+        console.log("Using fallback data for open tasks chart");
+        // Use fallback data if no real data is available
+        labels = ['TUDS', 'DMS', 'UMNP', 'NBSSPORTAL', 'GUS', 'CSM', 'SSO', 'UDB', 'CHM', 'LIS', 'APC'];
+        data = [2671, 1879, 443, 374, 133, 115, 93, 32, 21, 9, 5];
     }
 
     // Generate colors for each bar
@@ -294,7 +521,7 @@ function initOpenTasksChart(openTasksData) {
     const chartData = {
         labels: labels,
         datasets: [{
-            label: 'Количество открытых задач',
+            label: 'Затраченные часы',
             data: data,
             backgroundColor: colors.background,
             borderColor: colors.border,
@@ -302,44 +529,65 @@ function initOpenTasksChart(openTasksData) {
         }]
     };
 
-    const openTasksChart = new Chart(ctx, {
-        type: 'bar',
-        data: chartData,
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                x: {
-                    display: true,
-                    title: {
+    // Check if there's an existing chart and destroy it
+    if (chartElement.chart instanceof Chart) {
+        chartElement.chart.destroy();
+    }
+
+    try {
+        // Create new chart and store reference on the element
+        chartElement.chart = new Chart(ctx, {
+            type: 'bar',
+            data: chartData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
                         display: true,
-                        text: 'Проект'
+                        title: {
+                            display: true,
+                            text: 'Проект'
+                        },
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45
+                        }
                     },
-                    ticks: {
-                        maxRotation: 45,
-                        minRotation: 45
+                    y: {
+                        display: true,
+                        title: {
+                            display: true,
+                            text: 'Часы'
+                        },
+                        beginAtZero: true
                     }
                 },
-                y: {
-                    display: true,
-                    title: {
-                        display: true,
-                        text: 'Количество задач'
-                    },
-                    beginAtZero: true
-                }
-            },
-            onClick: function(e, elements) {
-                if (elements.length > 0) {
-                    const index = elements[0].index;
-                    const project = chartData.labels[index];
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.parsed.y;
+                                return `Затраченное время: ${value.toFixed(1)} ч.`;
+                            }
+                        }
+                    }
+                },
+                onClick: function(e, elements) {
+                    if (elements.length > 0) {
+                        const index = elements[0].index;
+                        const project = chartData.labels[index];
 
-                    // Create JQL query for open tasks in this project
-                    createOpenTasksJQL(project);
+                        // Create JQL query for open tasks in this project
+                        createOpenTasksJQL(project);
+                    }
                 }
             }
-        }
-    });
+        });
+        console.log("Open tasks chart created successfully");
+    } catch (error) {
+        console.error("Error creating open tasks chart:", error);
+    }
 }
 
 // Helper function to generate colors for chart bars
@@ -421,14 +669,63 @@ function updateDashboardSummary(latestData) {
         actualElement.textContent = Math.round(latestData.total_time_spent_days).toLocaleString();
     }
 
+    // Get the budget from the progress element
+    const progressElement = document.getElementById('time-progress');
+    const budget = progressElement ?
+        parseInt(progressElement.closest('.progress').dataset.budget) || 18000 :
+        18000;
+
+    // Calculate our own projected value based on current date and 2025 timeline
     const projectedElement = document.getElementById('projected-time-spent');
     if (projectedElement) {
-        projectedElement.textContent = Math.round(latestData.projected_time_spent_days).toLocaleString();
+        // Today's date
+        const today = new Date();
+
+        // Start date for project (Jan 1, 2025)
+        const startDate = new Date('2025-01-01');
+
+        // End date for project (Dec 31, 2025)
+        const endDate = new Date('2025-12-31');
+
+        // Total days in 2025
+        const totalDays = 365; // Fixed to avoid issues with date calculation
+
+        let projectedValue;
+
+        // If date is before 2025, projected value is 0
+        if (today < startDate) {
+            projectedValue = 0;
+        }
+        // If date is after 2025, projected value is the full budget
+        else if (today > endDate) {
+            projectedValue = budget;
+        }
+        // Calculate based on days passed in 2025
+        else {
+            // Calculate days passed in 2025
+            const daysPassed = Math.floor((today - startDate) / (1000 * 60 * 60 * 24)) + 1;
+
+            // Calculate projected value based on linear progression
+            projectedValue = Math.round((budget / totalDays) * daysPassed);
+        }
+
+        // Update the element with our calculated value
+        projectedElement.textContent = projectedValue.toLocaleString();
+
+        // Log the calculation details
+        console.log(`Projected value calculation: ${projectedValue} based on ${budget} budget`);
+        console.log(`Date info: Today=${today.toISOString().split('T')[0]}, startDate=2025-01-01, using ${totalDays} days`);
     }
 
+    // Recalculate the difference based on our newly calculated projected value
     const differenceElement = document.getElementById('time-difference');
-    if (differenceElement) {
-        const difference = latestData.projected_time_spent_days - latestData.total_time_spent_days;
+    if (differenceElement && actualElement && projectedElement) {
+        // Extract values from the displayed text (which now has our corrected calculation)
+        const actualValue = parseInt(actualElement.textContent.replace(/,/g, '')) || 0;
+        const projectedValue = parseInt(projectedElement.textContent.replace(/,/g, '')) || 0;
+
+        // Calculate difference
+        const difference = projectedValue - actualValue;
         differenceElement.textContent = Math.round(difference).toLocaleString();
 
         // Add class based on difference
@@ -439,14 +736,18 @@ function updateDashboardSummary(latestData) {
             differenceElement.classList.add('text-danger');
             differenceElement.classList.remove('text-success');
         }
+
+        console.log(`Difference calculation: ${difference} (${projectedValue} - ${actualValue})`);
     }
 
-    const progressElement = document.getElementById('time-progress');
+    // Update progress bar
     if (progressElement) {
-        // Получаем бюджет из атрибута data-* прогресс-бара или его родителя
-        const budget = parseInt(progressElement.closest('.progress').dataset.budget) || 18000;
-        const progress = (latestData.total_time_spent_days / budget) * 100;
+        // Get actual value for progress calculation
+        const actualValue = latestData.total_time_spent_days || 0;
+        const progress = (actualValue / budget) * 100;
         progressElement.style.width = `${progress}%`;
         progressElement.textContent = `${Math.round(progress)}%`;
+
+        console.log(`Progress bar: ${progress.toFixed(2)}% (${actualValue}/${budget})`);
     }
 }

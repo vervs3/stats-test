@@ -65,16 +65,17 @@
         </div>
     </div>
 
-    <div class="row mb-4">
-        <div class="col-md-12">
+    <!-- Full width row for time spent chart -->
+    <div class="row mb-4 time-spent-row">
+        <div class="col-12 full-width-chart">
             <div class="card">
                 <div class="card-header">
                     <h3>Трудозатраты NBSS</h3>
                 </div>
                 <div class="card-body">
-                    <p class="text-muted">График показывает фактические (красный) и прогнозные (синий) трудозатраты по дням. Нажмите на точку для перехода к подробному анализу.</p>
-                    <div class="chart-container">
-                        <canvas id="timeSpentChart" height="300"></canvas>
+                    <p class="text-muted">График показывает фактические (красный), прогнозные (синий) трудозатраты и прогноз до конца 2025 (зеленый). Нажмите на точку для перехода к подробному анализу.</p>
+                    <div class="chart-container time-spent-chart-container" id="timeSpentChart-container">
+                        <canvas id="timeSpentChart" height="400"></canvas>
                     </div>
                 </div>
             </div>

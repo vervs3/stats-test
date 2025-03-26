@@ -1,8 +1,23 @@
+/* Dashboard and Chart Styles */
 .chart-container {
     margin-bottom: 30px;
     height: 350px; /* Fixed height for container */
     position: relative; /* For proper canvas positioning */
     overflow: hidden; /* Prevent content overflow */
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+    max-width: 1200px;
+}
+
+/* Time spent chart specific styling */
+.time-spent-chart-container {
+    height: 500px !important;
+    margin: 0 auto;
+    width: 100% !important;
+    max-width: 1200px !important;
+    position: relative;
+    overflow: hidden;
 }
 
 .chart-canvas-wrapper {
@@ -21,6 +36,12 @@
 
 .progress {
     height: 20px;
+}
+
+.dashboard-progress {
+    max-width: 1000px;
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .analysis-card {
@@ -59,8 +80,16 @@
     padding: 1rem;
 }
 
+.dashboard .card-body {
+    text-align: center;
+}
+
 .card-header {
     padding: 0.5rem 1rem;
+}
+
+.dashboard .card-header {
+    text-align: center;
 }
 
 .metric-info {
@@ -105,6 +134,83 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+}
+
+/* Center chart descriptions on dashboard only */
+.dashboard .chart-description {
+    text-align: center;
+    max-width: 800px;
+    margin-left: auto;
+    margin-right: auto;
+    margin-bottom: 20px;
+}
+
+/* Make all chart containers consistent */
+.chart-wrapper {
+    padding: 0 15px;
+    margin-bottom: 30px;
+}
+
+/* Ensure consistent container padding */
+.container {
+    padding-left: 15px;
+    padding-right: 15px;
+}
+
+/* Reset any potential problematic styles */
+.row {
+    margin-left: -15px;
+    margin-right: -15px;
+}
+
+.col-12,
+.col-md-12 {
+    padding-left: 15px;
+    padding-right: 15px;
+}
+
+/* Dashboard specific styles */
+#timeSpentChart {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 auto;
+}
+
+#openTasksChart {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* Specifically fix the openTasksChart container */
+#openTasksChart-container {
+    height: 350px;
+    width: 100%;
+    position: relative;
+}
+
+/* Media queries for responsive layouts */
+@media (max-width: 768px) {
+    .chart-container {
+        height: 300px;
+    }
+
+    .time-spent-chart-container {
+        height: 400px !important;
+    }
+}
+
+@media (max-width: 576px) {
+    .chart-container {
+        height: 250px;
+    }
+
+    .time-spent-chart-container {
+        height: 350px !important;
+    }
+
+    .card-body {
+        padding: 0.75rem;
+    }
 }
 
 /* CLM specific styles */
@@ -188,39 +294,4 @@
     font-size: 1.2em;
     font-weight: bold;
     color: #0dcaf0;
-}
-
-/* Обеспечение масштабирования графиков по ширине экрана */
-.chart-container {
-    position: relative;
-    width: 100% !important;
-    height: 350px;
-    overflow: hidden;
-}
-
-.chart-canvas-wrapper {
-    position: relative;
-    height: 100%;
-    width: 100%;
-}
-
-.chart-canvas {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100% !important;
-    height: 100% !important;
-}
-
-/* Медиа-запросы для адаптивности */
-@media (max-width: 768px) {
-    .chart-container {
-        height: 300px;
-    }
-}
-
-@media (max-width: 576px) {
-    .chart-container {
-        height: 250px;
-    }
 }

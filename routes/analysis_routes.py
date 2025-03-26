@@ -302,46 +302,104 @@ def register_analysis_routes(app):
 
         return redirect(url_for('index'))
 
-    # Add this to routes/analysis_routes.py
-
     @app.route('/view/dashboard/<date_str>')
     def view_dashboard_analysis(date_str):
         """
         View dashboard analysis for a specific date
-        Similar to the view_analysis function but for dashboard data
+        Improved to handle missing JSON data file
         """
+        logger.info(f"Accessing dashboard view for date: {date_str}")
+
         DASHBOARD_DIR = 'nbss_data'
         folder_path = os.path.join(DASHBOARD_DIR, date_str)
 
+        # Check if the folder exists
         if not os.path.exists(folder_path):
-            return "Dashboard analysis not found for this date", 404
+            logger.error(f"Dashboard folder not found: {folder_path}")
+            return f"Dashboard analysis folder not found for date {date_str}", 404
 
-        # Load dashboard data for this date
-        data_file = os.path.join(DASHBOARD_DIR, f"{date_str}.json")
-        if not os.path.exists(data_file):
-            return "Dashboard data file not found", 404
-
-        try:
-            with open(data_file, 'r', encoding='utf-8') as f:
-                dashboard_data = json.load(f)
-        except Exception as e:
-            logger.error(f"Error reading dashboard data: {e}")
-            return f"Error reading dashboard data: {e}", 500
-
-        # Check for raw_issues.json
+        # Check for raw_issues.json (this is the critical file)
         raw_issues_path = os.path.join(folder_path, 'raw_issues.json')
         if not os.path.exists(raw_issues_path):
             logger.error(f"Raw issues file not found: {raw_issues_path}")
-            return "Raw issues data not found", 404
+            return f"Raw issues file not found for date {date_str}", 404
 
-        # Load and process raw issues
+        # Check for the JSON data file (create if missing)
+        data_file = os.path.join(DASHBOARD_DIR, f"{date_str}.json")
+        dashboard_data = None
+
+        if not os.path.exists(data_file):
+            logger.warning(f"Dashboard data file not found: {data_file}, generating from raw data")
+
+            # Generate basic dashboard data from raw issues
+            try:
+                with open(raw_issues_path, 'r', encoding='utf-8') as f:
+                    raw_issues = json.load(f)
+
+                    filtered_issues = raw_issues.get('filtered_issues', [])
+                    implementation_issues = raw_issues.get('all_implementation_issues', filtered_issues)
+
+                    # Count CLM-related issues
+                    clm_issues = raw_issues.get('clm_issues', [])
+                    est_issues = raw_issues.get('est_issues', [])
+                    improvement_issues = raw_issues.get('improvement_issues', [])
+
+                    # Calculate time spent
+                    total_time_spent_hours = 0
+                    for issue in filtered_issues:
+                        time_spent = issue.get('fields', {}).get('timespent', 0) or 0
+                        total_time_spent_hours += time_spent / 3600
+
+                    total_time_spent_days = total_time_spent_hours / 8
+                    projected_time_spent_days = total_time_spent_days * 1.2  # Simple estimate
+
+                    # Create basic dashboard data
+                    dashboard_data = {
+                        'date': f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}",
+                        'timestamp': date_str,
+                        'total_time_spent_hours': float(total_time_spent_hours),
+                        'total_time_spent_days': float(total_time_spent_days),
+                        'projected_time_spent_days': float(projected_time_spent_days),
+                        'clm_issues_count': len(clm_issues),
+                        'est_issues_count': len(est_issues),
+                        'improvement_issues_count': len(improvement_issues),
+                        'implementation_issues_count': len(implementation_issues),
+                        'filtered_issues_count': len(filtered_issues)
+                    }
+
+                    # Save for future use
+                    try:
+                        with open(data_file, 'w', encoding='utf-8') as f:
+                            json.dump(dashboard_data, f, indent=2, ensure_ascii=False)
+                        logger.info(f"Created dashboard data file: {data_file}")
+                    except Exception as e:
+                        logger.error(f"Error saving dashboard data: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Error generating dashboard data: {e}", exc_info=True)
+                return f"Error generating dashboard data: {e}", 500
+        else:
+            # Load the existing JSON data
+            try:
+                with open(data_file, 'r', encoding='utf-8') as f:
+                    dashboard_data = json.load(f)
+                    logger.info(f"Successfully loaded dashboard data from {data_file}")
+            except Exception as e:
+                logger.error(f"Error reading dashboard data: {e}", exc_info=True)
+                return f"Error reading dashboard data: {e}", 500
+
+        # Process the raw issues
         try:
             with open(raw_issues_path, 'r', encoding='utf-8') as f:
                 raw_issues = json.load(f)
 
-            # Process the raw issues data
-            filtered_issues = raw_issues.get('filtered_issues', [])
-            all_implementation_issues = raw_issues.get('all_implementation_issues', [])
+            # Extract issues based on the file structure
+            if isinstance(raw_issues, dict):
+                filtered_issues = raw_issues.get('filtered_issues', [])
+                all_implementation_issues = raw_issues.get('all_implementation_issues', filtered_issues)
+            else:
+                # Fallback if raw_issues is a list
+                filtered_issues = raw_issues
+                all_implementation_issues = raw_issues
 
             # Use the Jira analyzer to process the data
             from modules.jira_analyzer import JiraAnalyzer
@@ -385,13 +443,25 @@ def register_analysis_routes(app):
             if not open_tasks.empty:
                 no_transitions_by_project = open_tasks.groupby('project').size().to_dict()
 
-            # Extract issue keys
-            clm_issue_keys = [issue.get('key') for issue in raw_issues.get('clm_issues', []) if issue.get('key')]
-            est_issue_keys = [issue.get('key') for issue in raw_issues.get('est_issues', []) if issue.get('key')]
-            improvement_issue_keys = [issue.get('key') for issue in raw_issues.get('improvement_issues', []) if
-                                      issue.get('key')]
-            implementation_issue_keys = [issue.get('key') for issue in all_implementation_issues if issue.get('key')]
-            filtered_issue_keys = [issue.get('key') for issue in filtered_issues if issue.get('key')]
+            # Extract issue keys from raw issues
+            clm_issue_keys = []
+            est_issue_keys = []
+            improvement_issue_keys = []
+            implementation_issue_keys = []
+            filtered_issue_keys = []
+
+            # Check if the raw_issues contains structured data
+            if isinstance(raw_issues, dict):
+                clm_issues = raw_issues.get('clm_issues', [])
+                est_issues = raw_issues.get('est_issues', [])
+                improvement_issues = raw_issues.get('improvement_issues', [])
+
+                clm_issue_keys = [issue.get('key') for issue in clm_issues if issue.get('key')]
+                est_issue_keys = [issue.get('key') for issue in est_issues if issue.get('key')]
+                improvement_issue_keys = [issue.get('key') for issue in improvement_issues if issue.get('key')]
+                implementation_issue_keys = [issue.get('key') for issue in all_implementation_issues if
+                                             issue.get('key')]
+                filtered_issue_keys = [issue.get('key') for issue in filtered_issues if issue.get('key')]
 
             # Group issue keys by project
             project_issue_mapping = {}
@@ -426,7 +496,7 @@ def register_analysis_routes(app):
                     'no_transitions': {
                         'title': 'Открытые задачи со списаниями',
                         'by_project': no_transitions_by_project,
-                        'total': len(open_tasks) if 'open_tasks' in locals() else 0,
+                        'total': len(open_tasks),
                         'issue_keys_by_project': open_tasks_by_project
                     }
                 },
@@ -477,7 +547,7 @@ def register_analysis_routes(app):
                 'avg_estimate_per_issue': float(avg_estimate_per_issue),
                 'avg_time_spent_per_issue': float(avg_time_spent_per_issue),
                 'overall_efficiency': float(overall_efficiency),
-                'no_transitions_tasks_count': len(open_tasks) if 'open_tasks' in locals() else 0,
+                'no_transitions_tasks_count': len(open_tasks),
                 'clm_issues_count': len(clm_issue_keys),
                 'est_issues_count': len(est_issue_keys),
                 'improvement_issues_count': len(improvement_issue_keys),
@@ -496,7 +566,7 @@ def register_analysis_routes(app):
                 'clm_filter_id': "dashboard",  # Placeholder for dashboard data
                 'data_source': 'clm',  # Always use CLM data source
                 'chart_data': chart_data,
-                'tooltips': metrics_tooltips  # Make sure this is defined in analysis_routes.py
+                'tooltips': metrics_tooltips
             }
 
             return render_template('view.html',
