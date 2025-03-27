@@ -100,6 +100,8 @@ class JiraAnalyzer:
         No limit on the number of issues (default 10000 should be sufficient).
         Includes changelog request for transitions analysis.
 
+        FIXED: Properly handle filter_id parameter and correct error handling when data is not a JSON
+
         Args:
             jql_query (str): JQL query string
             filter_id (str/int): Jira filter ID to use instead of JQL
@@ -113,12 +115,19 @@ class JiraAnalyzer:
         search_url = f"{self.jira_url}/rest/api/2/search"
 
         # Use either jql_query or filter_id
-        if filter_id and not jql_query:
-            query_string = f'filter={filter_id}'
-        else:
+        query_string = ''
+        if filter_id:
+            # Make sure filter_id is a string
+            filter_id_str = str(filter_id)
+            query_string = f'filter={filter_id_str}'
+            self.logger.info(f"Using filter ID: {filter_id_str}")
+        elif jql_query:
             query_string = jql_query
+            self.logger.info(f"Using JQL query: {query_string}")
+        else:
+            self.logger.warning("No filter ID or JQL query provided, using empty query")
 
-        self.logger.info(f"Using query: {query_string}")
+        self.logger.info(f"Final query string: {query_string}")
 
         start_at = 0
         all_issues = []
@@ -190,8 +199,8 @@ class JiraAnalyzer:
                 self.logger.info(f"Retrieved {len(all_issues)}/{data.get('total', 0)} issues...")
 
                 # Exit if all issues received or max_results reached
-                if start_at >= data.get('total', 0):
-                    self.logger.info("Retrieved all issues matching the query.")
+                if start_at >= data.get('total', 0) or len(all_issues) >= max_results:
+                    self.logger.info("Retrieved all issues matching the query or reached max_results.")
                     break
 
             except Exception as e:
@@ -200,6 +209,7 @@ class JiraAnalyzer:
                 break
 
         return all_issues
+
     def get_linked_issues(self, issues, link_type=None, max_depth=1):
         """
         Get issues linked to the provided issues.

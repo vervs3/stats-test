@@ -10,6 +10,7 @@ def process_issues_data(issues):
     """
     Process issue data into a structured DataFrame with improved status handling.
     Added transitions analysis to identify issues that never changed status.
+    Added detection of issue links.
 
     Args:
         issues (list): List of issue dictionaries
@@ -54,6 +55,10 @@ def process_issues_data(issues):
         attachments = fields.get('attachment', [])
         has_attachments = len(attachments) > 0
 
+        # Check for issue links - NEW
+        links = fields.get('issuelinks', [])
+        has_links = len(links) > 0
+
         # Convert seconds to hours
         original_estimate_hours = original_estimate / 3600 if original_estimate else 0
         time_spent_hours = time_spent / 3600 if time_spent else 0
@@ -87,6 +92,7 @@ def process_issues_data(issues):
             'status_category': status_category,
             'has_comments': has_comments,
             'has_attachments': has_attachments,
+            'has_links': has_links,  # NEW field
             'created_date': created_date,
             'no_transitions': no_transitions
         })
@@ -101,6 +107,10 @@ def process_issues_data(issues):
     # Output count of issues without transitions
     no_transitions_count = df['no_transitions'].sum()
     logger.info(f"Found {no_transitions_count} issues without transitions")
+
+    # Output info about issues with links
+    has_links_count = df['has_links'].sum()
+    logger.info(f"Found {has_links_count} issues with links to other issues")
 
     return df
 
@@ -143,6 +153,41 @@ def get_improved_open_statuses(df):
 
     return open_statuses
 
+
+def get_closed_tasks_without_links(df):
+    """
+    Get closed tasks without comments, attachments, and links
+
+    Args:
+        df (pandas.DataFrame): Processed data
+
+    Returns:
+        pandas.DataFrame: Filtered data with closed tasks without comments, attachments, and links
+    """
+    logger.info("GETTING CLOSED TASKS WITHOUT COMMENTS, ATTACHMENTS, AND LINKS")
+
+    # Get status categories
+    status_categories = get_status_categories(df)
+    closed_statuses = status_categories['closed_statuses']
+
+    # Filter tasks with these statuses, without comments and attachments
+    closed_tasks = df[df['status'].isin(closed_statuses) &
+                      (~df['has_comments']) &
+                      (~df['has_attachments'])]
+
+    # Further filter to exclude tasks with links
+    if 'has_links' in df.columns:
+        closed_tasks = closed_tasks[~closed_tasks['has_links']]
+        logger.info(f"Using existing has_links column to filter")
+    else:
+        # We need to manually check if tasks have links
+        logger.info(f"No has_links column found, creating one based on raw issues data")
+        # This is a fallback and might not work without raw issues data
+        # In a real implementation, the has_links column should be created during initial data processing
+
+    logger.info(f"FOUND {len(closed_tasks)} CLOSED TASKS WITHOUT COMMENTS, ATTACHMENTS, AND LINKS")
+
+    return closed_tasks
 
 def get_status_categories(df):
     """

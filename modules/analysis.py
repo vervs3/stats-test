@@ -272,6 +272,8 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
     """
     Run Jira data analysis in a separate thread
 
+    FIXED: Proper handling of filter_id and JQL parameters
+
     Args:
         data_source (str): Data source ('jira' or 'clm')
         use_filter (bool): Whether to use filter ID or JQL query
@@ -283,6 +285,10 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
         clm_jql_query (str): CLM JQL query to use instead of filter ID
     """
     global analysis_state
+
+    # Инициализируем components_to_projects в начале функции, чтобы избежать ошибки
+    # "referenced before assignment"
+    components_to_projects = {}
 
     try:
         analysis_state['is_running'] = True
@@ -324,21 +330,34 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
         if data_source == 'jira':
             # Standard Jira analysis
             if use_filter:
-                final_jql = f'filter={filter_id}'
+                # Ensure filter_id is a string
+                filter_id_str = str(filter_id)
+                final_jql = f'filter={filter_id_str}'
+                logger.info(f"JIRA mode: Using filter ID: {filter_id_str}")
             else:
                 final_jql = jql_query or ""
+                logger.info(f"JIRA mode: Using JQL query: {final_jql}")
         else:
             # CLM analysis
             analysis_state['status_message'] = 'Processing CLM data...'
 
             # Get CLM issues first
             if use_filter:
-                clm_query = f'project = CLM AND filter={clm_filter_id}'
+                # Ensure clm_filter_id is a string
+                clm_filter_id_str = str(clm_filter_id)
+                clm_query = f'project = CLM AND filter={clm_filter_id_str}'
+                logger.info(f"CLM mode: Using filter ID: {clm_filter_id_str}")
             else:
                 clm_query = clm_jql_query or "project = CLM"
+                logger.info(f"CLM mode: Using JQL query: {clm_query}")
 
             analysis_state['status_message'] = f'Fetching CLM issues with query: {clm_query}'
             analysis_state['progress'] = 5
+
+            # Get CLM issues
+            clm_issues = analyzer.get_issues_by_filter(jql_query=clm_query)
+            clm_count = len(clm_issues)
+            analysis_state['status_message'] = f'Found {clm_count} CLM issues'
 
             # Get CLM issues
             clm_issues = analyzer.get_issues_by_filter(jql_query=clm_query)
@@ -578,10 +597,14 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
                 date_conditions.append(f'worklogDate <= "{date_to}"')
 
             if date_conditions:
+                date_condition_str = ' AND '.join(date_conditions)
+
                 if final_jql:
-                    final_jql = f"({final_jql}) AND ({' AND '.join(date_conditions)})"
+                    final_jql = f"({final_jql}) AND ({date_condition_str})"
                 else:
-                    final_jql = ' AND '.join(date_conditions)
+                    final_jql = date_condition_str
+
+                logger.info(f"Added date conditions: {date_condition_str}")
 
         if data_source == 'jira':
             analysis_state['status_message'] = f'Using query: {final_jql}'
@@ -589,7 +612,14 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
 
             # Fetch issues
             analysis_state['status_message'] = 'Fetching issues from Jira...'
-            issues = analyzer.get_issues_by_filter(jql_query=final_jql)
+
+            # Important: Pass jql_query and filter_id correctly based on use_filter
+            if use_filter:
+                issues = analyzer.get_issues_by_filter(filter_id=filter_id)
+                logger.info(f"Fetching issues using filter ID: {filter_id}")
+            else:
+                issues = analyzer.get_issues_by_filter(jql_query=final_jql)
+                logger.info(f"Fetching issues using JQL query: {final_jql}")
 
         analysis_state['total_issues'] = len(issues)
         analysis_state['status_message'] = f'Found {len(issues)} issues.'
@@ -830,6 +860,7 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
             with open(raw_issues_path, 'w', encoding='utf-8') as f:
                 json.dump(issues, f, indent=2, ensure_ascii=False)
             logger.info(f"Raw issue data saved to {raw_issues_path}")
+
 
     except Exception as e:
         logger.error(f"Error during analysis: {e}", exc_info=True)

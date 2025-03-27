@@ -84,6 +84,7 @@
                                 </tbody>
                             </table>
                         </div>
+
                         <div class="col-md-6">
                             {% if data.summary %}
                                 <table class="table">
@@ -91,15 +92,15 @@
                                         <tr>
                                             <th>
                                                 Количество проектов:
-                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.projects_count }}">ⓘ</i>
+                                                <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ data.tooltips.projects_count }}"></i>
                                             </th>
                                             <td>{{ data.summary.projects_count|default(0) }}</td>
                                         </tr>
                                         {% if data.data_source == 'clm' and data.chart_data and data.chart_data.project_clm_estimates %}
                                         <tr>
                                             <th>
-                                                Общая оценка по CLM EST (часы):
-                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="Суммарная оценка времени из EST тикетов в часах">ⓘ</i>
+                                                Общая оценка по CLM EST (дни):
+                                                <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="Суммарная оценка времени из EST тикетов в рабочих днях"></i>
                                             </th>
                                             <td>
                                                 <script>
@@ -107,8 +108,9 @@
                                                         try {
                                                             const chartData = JSON.parse(document.getElementById('chart-data').textContent);
                                                             if (chartData && chartData.project_clm_estimates) {
-                                                                const totalClmEst = Object.values(chartData.project_clm_estimates).reduce((sum, val) => sum + val, 0);
-                                                                document.getElementById('total-clm-est').textContent = totalClmEst.toFixed(2);
+                                                                const totalClmEstHours = Object.values(chartData.project_clm_estimates).reduce((sum, val) => sum + val, 0);
+                                                                const totalClmEstDays = (totalClmEstHours / 8).toFixed(2);
+                                                                document.getElementById('total-clm-est').textContent = totalClmEstDays;
                                                             }
                                                         } catch (e) {
                                                             console.error('Error calculating total CLM EST:', e);
@@ -121,36 +123,36 @@
                                         {% endif %}
                                         <tr>
                                             <th>
-                                                Общая исходная оценка (часы):
-                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.total_original_estimate_hours }}">ⓘ</i>
+                                                Общая исходная оценка (дни):
+                                                <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ data.tooltips.total_original_estimate_hours }}"></i>
                                             </th>
-                                            <td>{{ "%.2f"|format(data.summary.total_original_estimate_hours|default(0)|float) }}</td>
+                                            <td>{{ "%.2f"|format((data.summary.total_original_estimate_hours|default(0)|float) / 8) }}</td>
                                         </tr>
                                         <tr>
                                             <th>
-                                                Общее затраченное время (часы):
-                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.total_time_spent_hours }}">ⓘ</i>
+                                                Общее затраченное время (дни):
+                                                <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ data.tooltips.total_time_spent_hours }}"></i>
                                             </th>
-                                            <td>{{ "%.2f"|format(data.summary.total_time_spent_hours|default(0)|float) }}</td>
+                                            <td>{{ "%.2f"|format((data.summary.total_time_spent_hours|default(0)|float) / 8) }}</td>
                                         </tr>
                                         <tr>
                                             <th>
-                                                Средняя оценка на задачу (часы):
-                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.avg_estimate_per_issue }}">ⓘ</i>
+                                                Средняя оценка на задачу (дни):
+                                                <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ data.tooltips.avg_estimate_per_issue }}"></i>
                                             </th>
-                                            <td>{{ "%.2f"|format(data.summary.avg_estimate_per_issue|default(0)|float) }}</td>
+                                            <td>{{ "%.2f"|format((data.summary.avg_estimate_per_issue|default(0)|float) / 8) }}</td>
                                         </tr>
                                         <tr>
                                             <th>
-                                                Среднее затраченное время на задачу (часы):
-                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.avg_time_spent_per_issue }}">ⓘ</i>
+                                                Среднее затраченное время на задачу (дни):
+                                                <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ data.tooltips.avg_time_spent_per_issue }}"></i>
                                             </th>
-                                            <td>{{ "%.2f"|format(data.summary.avg_time_spent_per_issue|default(0)|float) }}</td>
+                                            <td>{{ "%.2f"|format((data.summary.avg_time_spent_per_issue|default(0)|float) / 8) }}</td>
                                         </tr>
                                         <tr>
                                             <th>
                                                 Общий коэффициент эффективности:
-                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.overall_efficiency }}">ⓘ</i>
+                                                <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ data.tooltips.overall_efficiency }}"></i>
                                             </th>
                                             <td>{{ "%.2f"|format(data.summary.overall_efficiency|default(0)|float) }}</td>
                                         </tr>
@@ -158,9 +160,19 @@
                                         <tr>
                                             <th>
                                                 Открытые задачи со списаниями:
-                                                <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.no_transitions_tasks_count }}">ⓘ</i>
+                                                <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ data.tooltips.no_transitions_tasks_count }}"></i>
                                             </th>
                                             <td>{{ data.summary.no_transitions_tasks_count }}</td>
+                                        </tr>
+                                        {% endif %}
+
+                                        {% if data.summary.closed_tasks_no_links_count is defined %}
+                                        <tr>
+                                            <th>
+                                                Закрытые задачи без комментариев и связей:
+                                                <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="Количество задач в статусе Closed/Done/Resolved без комментариев, вложений и связей"></i>
+                                            </th>
+                                            <td>{{ data.summary.closed_tasks_no_links_count }}</td>
                                         </tr>
                                         {% endif %}
 
@@ -170,7 +182,7 @@
                                             <tr>
                                                 <th>
                                                     Количество тикетов CLM:
-                                                    <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.clm_issues_count }}">ⓘ</i>
+                                                    <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ data.tooltips.clm_issues_count }}"></i>
                                                 </th>
                                                 <td>{{ data.summary.clm_issues_count }}</td>
                                             </tr>
@@ -180,17 +192,16 @@
                                             <tr>
                                                 <th>
                                                     Количество тикетов EST:
-                                                    <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.est_issues_count }}">ⓘ</i>
+                                                    <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ data.tooltips.est_issues_count }}"></i>
                                                 </th>
                                                 <td>{{ data.summary.est_issues_count }}</td>
                                             </tr>
                                             {% endif %}
-
                                             {% if data.summary.improvement_issues_count is defined %}
                                             <tr>
                                                 <th>
                                                     Количество Improvement и Analyzing тикетов:
-                                                    <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="Количество тикетов типа 'Improvement from CLM' и 'Analyzing from CLM'">ⓘ</i>
+                                                    <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="Количество тикетов типа 'Improvement from CLM' и 'Analyzing from CLM'"></i>
                                                 </th>
                                                 <td>{{ data.summary.improvement_issues_count }}</td>
                                             </tr>
@@ -200,7 +211,7 @@
                                             <tr>
                                                 <th>
                                                     Всего связанных задач:
-                                                    <i class="bi bi-info-circle metric-info" data-bs-toggle="tooltip" title="{{ data.tooltips.linked_issues_count }}">ⓘ</i>
+                                                    <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="{{ data.tooltips.linked_issues_count }}"></i>
                                                 </th>
                                                 <td>{{ data.summary.linked_issues_count }}</td>
                                             </tr>

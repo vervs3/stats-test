@@ -5,11 +5,12 @@
 {% block header %}
     <div class="d-flex justify-content-between align-items-center">
         <span>NBSS Dashboard</span>
-        <div class="dashboard-controls">
-            <span class="text-muted">
-                <span id="last-refresh-time">{{ latest_timestamp or now.strftime('%Y-%m-%d') }}</span>
-            </span>
-            <button id="trigger-collection" class="btn btn-sm btn-outline-primary ms-2" title="Запустить сбор данных">
+        <div class="dashboard-controls d-flex align-items-center">
+            <div class="me-3 d-flex align-items-center">
+                <span class="me-2"></span>
+                <span id="last-refresh-time" class="fw-bold">{{ latest_timestamp or now.strftime('%Y-%m-%d') }}</span>
+            </div>
+            <button id="trigger-collection" class="btn btn-outline-primary" title="Запустить сбор данных">
                 <i class="bi bi-cloud-download"></i> Сбор данных
             </button>
         </div>
@@ -94,6 +95,23 @@
                         <p class="text-muted">Задачи в статусе Open, на которые списано время. Нажмите на столбец для просмотра задач в Jira.</p>
                         <div class="chart-container">
                             <canvas id="openTasksChart" height="300"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Add this after the open tasks chart -->
+        <div class="row mt-4">
+            <div class="col-md-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Закрытые задачи без комментариев, вложений и связей</h3>
+                    </div>
+                    <div class="card-body">
+                        <p class="text-muted">Задачи в статусе Closed/Done/Resolved, у которых отсутствуют комментарии, вложения и любые связи с другими задачами. Нажмите на столбец для просмотра задач в Jira.</p>
+                        <div class="chart-container">
+                            <canvas id="closedTasksChart" height="300"></canvas>
                         </div>
                     </div>
                 </div>
@@ -191,5 +209,6 @@
         }
     </script>
     <!-- Use simplified dashboard JS with better error handling -->
-    <script src="{{ url_for('static', filename='js/simplified-dashboard.js') }}"></script>
+    <!--<script src="{{ url_for('static', filename='js/simplified-dashboard.js') }}"></script>-->
+    <script type="module" src="{{ url_for('static', filename='js/dashboard/index.js') }}"></script>
 {% endblock %}

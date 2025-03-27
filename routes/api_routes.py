@@ -169,7 +169,6 @@ def register_api_routes(app):
                 }
             })
 
-    # Add decorator to disable basic request logging for /logs to prevent log flooding
     @app.before_request
     def log_request_skip_logs():
         if request.path == '/logs':
@@ -366,6 +365,7 @@ def register_api_routes(app):
         - is_clm: Whether this is a CLM analysis (optional)
         - timestamp: Analysis timestamp folder (optional)
         - ignore_period: Whether to ignore date filters (optional)
+        - count_based: Whether to use count-based queries instead of time-based (optional)
         """
         project = request.args.get('project')
         chart_type = request.args.get('chart_type')
@@ -375,10 +375,11 @@ def register_api_routes(app):
         is_clm = request.args.get('is_clm', 'false').lower() == 'true'
         timestamp = request.args.get('timestamp')
         ignore_period = request.args.get('ignore_period', 'false').lower() == 'true'
+        count_based = request.args.get('count_based', 'false').lower() == 'true'
 
-        # Log the received parameters including ignore_period and timestamp details
+        # Log the received parameters including count_based parameter
         logger.info(f"special_jql called: project={project}, chart_type={chart_type}, is_clm={is_clm}, " +
-                    f"ignore_period={ignore_period}, date_from={date_from}, date_to={date_to}")
+                    f"ignore_period={ignore_period}, count_based={count_based}, date_from={date_from}, date_to={date_to}")
 
         # Check if it's a dashboard timestamp
         is_dashboard = timestamp and len(timestamp) == 8 and timestamp.isdigit()
@@ -434,7 +435,15 @@ def register_api_routes(app):
             else:
                 # If no issue keys found, use a fallback query
                 if chart_type == 'open_tasks':
-                    jql = f'project = {project} AND status in (Open, "NEW") AND timespent > 0'
+                    # Check if we should use count-based or time-based query
+                    if count_based:
+                        # Modified query to focus on the count of tasks, not time spent
+                        jql = f'project = {project} AND status in (Open, "NEW")'
+                        logger.info(f"Using count-based open tasks query")
+                    else:
+                        # Original time-based query
+                        jql = f'project = {project} AND status in (Open, "NEW") AND timespent > 0'
+                        logger.info(f"Using time-based open tasks query")
                 elif chart_type == 'clm_issues':
                     jql = 'project = CLM'
                 elif chart_type == 'est_issues':
@@ -446,6 +455,21 @@ def register_api_routes(app):
                         jql = f'project = {project}'
                     else:
                         jql = ''  # Empty query as fallback
+                elif chart_type == 'closed_tasks':
+                    # Query for closed tasks without comments, attachments, and links
+                    if count_based:
+                        # Modified query to focus on finding closed tasks without comments, attachments, and links
+                        closed_statuses = "status in (Closed, Done, Resolved, \"Выполнено\")"
+                        no_comments = "comment is EMPTY"
+                        no_attachments = "attachments is EMPTY"
+                        no_links = "issueFunction not in linkedIssuesOf(\"project is not EMPTY\")"
+
+                        jql = f'project = {project} AND {closed_statuses} AND {no_comments} AND {no_attachments} AND {no_links}'
+                        logger.info(f"Using query for closed tasks without comments, attachments, and links")
+                    else:
+                        # Fallback to basic closed status query
+                        jql = f'project = {project} AND status in (Closed, Done, Resolved, \"Выполнено\")'
+                        logger.info(f"Using basic closed status query")
                 else:
                     jql = ''  # Empty query as fallback
 
@@ -476,9 +500,16 @@ def register_api_routes(app):
 
             # Add conditions based on chart type
             if chart_type == 'open_tasks':
-                # Use default open statuses
-                conditions.append("status in (Open, \"NEW\")")
-                conditions.append("timespent > 0")
+                # Check if we should use count-based or time-based query
+                if count_based:
+                    # Only include status conditions, not time spent
+                    conditions.append("status in (Open, \"NEW\")")
+                    logger.info(f"Using count-based open tasks query (standard mode)")
+                else:
+                    # Include both status and time spent conditions
+                    conditions.append("status in (Open, \"NEW\")")
+                    conditions.append("timespent > 0")
+                    logger.info(f"Using time-based open tasks query (standard mode)")
 
             # Add time filters if specified and not ignoring period and not a CLM summary chart type
             if (date_from or date_to) and not ignore_period and chart_type not in clm_summary_chart_types:
@@ -505,7 +536,8 @@ def register_api_routes(app):
             jql = final_jql
 
         # Log the final JQL query
-        logger.info(f"Generated JQL for {chart_type}, project {project}, ignore_period={ignore_period}: {jql}")
+        logger.info(
+            f"Generated JQL for {chart_type}, project {project}, ignore_period={ignore_period}, count_based={count_based}: {jql}")
 
         # Create URL for Jira
         jira_url = "https://jira.nexign.com/issues/?jql=" + jql.replace(" ", "%20")

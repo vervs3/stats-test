@@ -14,16 +14,7 @@ from modules.data_processor import get_improved_open_statuses, get_status_catego
 def create_visualizations(df, output_dir='jira_charts', logger=None):
     """
     Create visualizations from processed data.
-    Removed charts "Original estimate by project" and "Time spent by project".
-    Added chart for issues without transitions (which are likely still in OPEN status).
-
-    Args:
-        df (pandas.DataFrame): Processed data
-        output_dir (str): Directory for saving visualizations
-        logger: Logger instance
-
-    Returns:
-        dict: Paths to generated charts
+    Added chart for closed tasks without comments, attachments, and links.
     """
     # Set default logger if none provided
     if logger is None:
@@ -52,6 +43,8 @@ def create_visualizations(df, output_dir='jira_charts', logger=None):
     chart_paths.update(create_no_transitions_chart(df, output_dir, logger))
     chart_paths.update(create_open_tasks_chart(df, output_dir, logger))
     chart_paths.update(create_closed_tasks_chart(df, output_dir, logger))
+    # Add the new chart
+    chart_paths.update(create_closed_tasks_without_links_chart(df, output_dir, logger))
 
     # Generate summary statistics
     summary = {
@@ -81,9 +74,19 @@ def create_visualizations(df, output_dir='jira_charts', logger=None):
     # Add closed tasks data
     status_categories = get_status_categories(df)
     closed_statuses = status_categories['closed_statuses']
+
+    # Traditional closed tasks (just no comments/attachments)
     closed_tasks = df[df['status'].isin(closed_statuses) & (~df['has_comments']) & (~df['has_attachments'])]
     if not closed_tasks.empty:
         summary['completed_tasks_no_comments_count'] = len(closed_tasks)
+
+    # New closed tasks without links as well
+    closed_tasks_no_links = df[df['status'].isin(closed_statuses) &
+                               (~df['has_comments']) &
+                               (~df['has_attachments']) &
+                               (~df['has_links'])]
+    if not closed_tasks_no_links.empty:
+        summary['closed_tasks_no_links_count'] = len(closed_tasks_no_links)
 
     # Save summary as JSON
     summary_path = f"{output_dir}/summary.json"
@@ -451,6 +454,81 @@ def create_closed_tasks_chart(df, output_dir, logger):
         # Still include count in summary data even if chart creation fails
         if 'closed_tasks' in locals() and not closed_tasks.empty:
             chart_paths['completed_tasks_no_comments_count'] = len(closed_tasks)
+
+    return chart_paths
+
+
+def create_closed_tasks_without_links_chart(df, output_dir, logger):
+    """Create chart for closed tasks without comments, attachments, and links"""
+    logger.info("GENERATING CLOSED TASKS WITHOUT COMMENTS, ATTACHMENTS, AND LINKS CHART")
+    chart_paths = {}
+
+    try:
+        # Get status categories
+        status_categories = get_status_categories(df)
+        closed_statuses = status_categories['closed_statuses']
+
+        # Filter tasks with closed statuses, without comments, attachments, and links
+        closed_tasks = df[df['status'].isin(closed_statuses) &
+                          (~df['has_comments']) &
+                          (~df['has_attachments']) &
+                          (~df['has_links'])]
+
+        logger.info(f"FOUND {len(closed_tasks)} CLOSED TASKS WITHOUT COMMENTS, ATTACHMENTS, AND LINKS")
+
+        if len(closed_tasks) > 0:
+            logger.info(f"SAMPLE CLOSED TASKS: {closed_tasks['issue_key'].head(5).tolist()}")
+
+        # Always create a chart, even if empty
+        plt.figure(figsize=(12, 7))
+
+        if not closed_tasks.empty:
+            closed_tasks_by_project = closed_tasks.groupby('project').size().sort_values(ascending=False)
+            logger.info(f"CLOSED TASKS BY PROJECT: {closed_tasks_by_project.to_dict()}")
+
+            if not closed_tasks_by_project.empty:
+                ax = sns.barplot(x=closed_tasks_by_project.index, y=closed_tasks_by_project.values)
+                ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+                plt.tight_layout()
+        else:
+            # Create an empty chart with a message
+            plt.text(0.5, 0.5, "Нет закрытых задач без комментариев, вложений и связей",
+                     horizontalalignment='center', verticalalignment='center',
+                     transform=plt.gca().transAxes, fontsize=14)
+            plt.xticks([])
+            plt.yticks([])
+
+        plt.title('Закрытые задачи без комментариев, вложений и связей')
+        plt.xlabel('Проект')
+        plt.ylabel('Количество задач')
+
+        # Always save the chart
+        closed_tasks_chart_path = f"{output_dir}/closed_tasks_no_links.png"
+        plt.savefig(closed_tasks_chart_path)
+        plt.close()
+        chart_paths['closed_tasks_no_links'] = closed_tasks_chart_path
+        logger.info(f"CLOSED TASKS CHART SAVED TO: {closed_tasks_chart_path}")
+
+        # Save metrics data
+        metrics_dir = os.path.join(output_dir, 'metrics')
+        if not os.path.exists(metrics_dir):
+            os.makedirs(metrics_dir)
+
+        closed_tasks_data = {
+            'count': len(closed_tasks),
+            'by_project': closed_tasks.groupby('project').size().to_dict() if not closed_tasks.empty else {}
+        }
+
+        closed_tasks_metrics_path = os.path.join(metrics_dir, 'closed_tasks_no_links.json')
+        with open(closed_tasks_metrics_path, 'w', encoding='utf-8') as f:
+            json.dump(closed_tasks_data, f, indent=4, ensure_ascii=False)
+        logger.info(f"CLOSED TASKS METRICS SAVED TO: {closed_tasks_metrics_path}")
+
+    except Exception as e:
+        logger.error(f"ERROR GENERATING CLOSED TASKS CHART: {e}", exc_info=True)
+        # Still include count in summary data even if chart creation fails
+        if 'closed_tasks' in locals() and not closed_tasks.empty:
+            chart_paths['closed_tasks_no_links_count'] = len(closed_tasks)
 
     return chart_paths
 

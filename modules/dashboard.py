@@ -6,7 +6,7 @@ import logger
 import pandas as pd
 from datetime import datetime, timedelta, date
 from modules.jira_analyzer import JiraAnalyzer
-from modules.data_processor import process_issues_data, get_improved_open_statuses
+from modules.data_processor import process_issues_data, get_improved_open_statuses, get_status_categories
 
 try:
     from config import PROJECT_BUDGET, DASHBOARD_UPDATE_HOUR, DASHBOARD_UPDATE_MINUTE, DASHBOARD_REFRESH_INTERVAL
@@ -126,6 +126,31 @@ def collect_daily_data():
                 # Store issue keys for open tasks
                 open_tasks_issue_keys = open_tasks['issue_key'].tolist()
 
+        # Calculate closed tasks without comments, attachments, and links
+        closed_tasks_data = {}
+        if df is not None and not df.empty:
+            # Get status categories
+            status_categories = get_status_categories(df)
+            closed_statuses = status_categories['closed_statuses']
+
+            # Filter for closed tasks without comments, attachments, and links
+            closed_tasks = df[df['status'].isin(closed_statuses) &
+                              (~df['has_comments']) &
+                              (~df['has_attachments']) &
+                              (~df['has_links'])]
+
+            if not closed_tasks.empty:
+                # Group by project
+                closed_tasks_by_project = closed_tasks.groupby('project').size().to_dict()
+                closed_tasks_data = closed_tasks_by_project
+
+                # Store issue keys for closed tasks
+                closed_tasks_issue_keys = closed_tasks['issue_key'].tolist()
+            else:
+                closed_tasks_issue_keys = []
+        else:
+            closed_tasks_issue_keys = []
+
         # Get today's date string for file naming
         date_str = datetime.now().strftime('%Y%m%d')
 
@@ -171,7 +196,8 @@ def collect_daily_data():
             'implementation_issue_keys': [issue.get('key') for issue in implementation_issues if issue.get('key')],
             'filtered_issue_keys': [issue.get('key') for issue in implementation_issues if issue.get('key')],
             # Same as implementation
-            'open_tasks_issue_keys': open_tasks_issue_keys
+            'open_tasks_issue_keys': open_tasks_issue_keys,
+            'closed_tasks_issue_keys': closed_tasks_issue_keys
         }
 
         # Group issue keys by project for JQL generation
@@ -201,6 +227,7 @@ def collect_daily_data():
             'days_passed': days_passed,
             'total_working_days': total_working_days,
             'open_tasks_data': open_tasks_data,
+            'closed_tasks_data': closed_tasks_data,
             'clm_issues_count': len(clm_issues),
             'est_issues_count': len(est_issues),
             'improvement_issues_count': len(improvement_issues),
@@ -319,6 +346,11 @@ def get_dashboard_data():
         if latest_data:
             open_tasks_data = latest_data.get('open_tasks_data', {})
 
+        # Get closed tasks data - handle missing keys safely
+        closed_tasks_data = {}
+        if latest_data:
+            closed_tasks_data = latest_data.get('closed_tasks_data', {})
+
         # Get refresh interval from latest data or use the default
         refresh_interval = latest_data.get('refresh_interval',
                                            DASHBOARD_REFRESH_INTERVAL) if latest_data else DASHBOARD_REFRESH_INTERVAL
@@ -339,6 +371,7 @@ def get_dashboard_data():
             'time_series': {'dates': [], 'actual_time_spent': [], 'projected_time_spent': []},
             'latest_data': None,
             'open_tasks_data': {},
+            'closed_tasks_data': closed_tasks_data,  # Add this line
             'latest_timestamp': None,
             'has_raw_data': False,
             'refresh_interval': DASHBOARD_REFRESH_INTERVAL

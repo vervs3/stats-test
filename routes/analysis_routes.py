@@ -32,12 +32,15 @@ def register_analysis_routes(app):
 
     @app.route('/start_analysis', methods=['POST'])
     def start_analysis():
-        """Handle starting a new analysis"""
+        """Handle starting a new analysis with improved error handling"""
         if analysis_state['is_running']:
             return redirect(url_for('index'))
 
         # Get data source (jira or clm)
         data_source = request.form.get('data_source', 'jira')
+
+        # Log the data source for debugging
+        logger.info(f"Starting analysis with data source: {data_source}")
 
         # Common parameters
         use_filter = request.form.get('use_filter') == 'yes'
@@ -48,11 +51,26 @@ def register_analysis_routes(app):
         date_from = date_from if date_from else None
         date_to = date_to if date_to else None
 
+        # Log date parameters
+        logger.info(f"Date parameters: from={date_from}, to={date_to}")
+
         # Source-specific parameters
         if data_source == 'jira':
             # Standard Jira analysis
             filter_id = request.form.get('filter_id', '114476')
             jql_query = request.form.get('jql_query', '')
+
+            # Make sure filter_id is a valid integer if using filter
+            if use_filter:
+                try:
+                    filter_id = int(filter_id)
+                    logger.info(f"Using filter ID: {filter_id}")
+                except ValueError:
+                    logger.error(f"Invalid filter ID: {filter_id}, falling back to default: 114476")
+                    filter_id = 114476
+            else:
+                logger.info(f"Using JQL query: {jql_query}")
+
             clm_filter_id = None
             clm_jql_query = None
         else:
@@ -62,6 +80,17 @@ def register_analysis_routes(app):
             clm_filter_id = request.form.get('clm_filter_id', '114473')
             clm_jql_query = request.form.get('clm_jql_query', '')
 
+            # Make sure clm_filter_id is a valid integer if using filter
+            if use_filter:
+                try:
+                    clm_filter_id = int(clm_filter_id)
+                    logger.info(f"Using CLM filter ID: {clm_filter_id}")
+                except ValueError:
+                    logger.error(f"Invalid CLM filter ID: {clm_filter_id}, falling back to default: 114473")
+                    clm_filter_id = 114473
+            else:
+                logger.info(f"Using CLM JQL query: {clm_jql_query}")
+
         # Start analysis in a separate thread
         analysis_thread = threading.Thread(
             target=run_analysis,
@@ -69,6 +98,8 @@ def register_analysis_routes(app):
         )
         analysis_thread.daemon = True
         analysis_thread.start()
+
+        logger.info(f"Analysis thread started successfully")
 
         return redirect(url_for('index'))
 
