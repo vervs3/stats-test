@@ -3,16 +3,17 @@
 {% block title %}NBSS Dashboard{% endblock %}
 
 {% block header %}
-    NBSS Dashboard
-    <small class="text-muted">
-        <span id="last-refresh-time">{{ now.strftime('%H:%M:%S') }}</span>
-        <button id="manual-refresh" class="btn btn-sm btn-outline-secondary ms-2" title="Обновить данные">
-            <i class="bi bi-arrow-clockwise"></i>
-        </button>
-        <button id="trigger-collection" class="btn btn-sm btn-outline-primary ms-2" title="Запустить сбор данных">
-            <i class="bi bi-cloud-download"></i> Сбор данных
-        </button>
-    </small>
+    <div class="d-flex justify-content-between align-items-center">
+        <span>NBSS Dashboard</span>
+        <div class="dashboard-controls">
+            <span class="text-muted">
+                <span id="last-refresh-time">{{ latest_timestamp or now.strftime('%Y-%m-%d') }}</span>
+            </span>
+            <button id="trigger-collection" class="btn btn-sm btn-outline-primary ms-2" title="Запустить сбор данных">
+                <i class="bi bi-cloud-download"></i> Сбор данных
+            </button>
+        </div>
+    </div>
 {% endblock %}
 
 {% block content %}
@@ -128,6 +129,8 @@
     <script>
         // Set refresh interval from the server configuration
         document.body.dataset.refreshInterval = "{{ refresh_interval }}";
+        // Store latest timestamp for use in charts
+        document.body.dataset.latestTimestamp = "{{ latest_timestamp|default('') }}";
 
         // Add event listener for manual refresh and data collection
         document.addEventListener('DOMContentLoaded', function() {

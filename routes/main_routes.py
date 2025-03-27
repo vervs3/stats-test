@@ -1,7 +1,7 @@
 import os
 import logging
 from datetime import datetime, timedelta
-from flask import render_template, jsonify
+from flask import render_template, jsonify, redirect, url_for
 from modules.utils import format_timestamp_for_display
 
 # Get logger
@@ -23,7 +23,12 @@ def register_main_routes(app):
 
     @app.route('/')
     def index():
-        """Render the main page"""
+        """Redirect to dashboard as the default page"""
+        return redirect(url_for('dashboard'))
+
+    @app.route('/jira-analyzer')
+    def jira_analyzer():
+        """Render the JIRA analyzer page"""
         # Get list of all analysis folders (sorted by date in reverse order)
         CHARTS_DIR = 'jira_charts'
         analysis_folders = []
@@ -102,8 +107,32 @@ def register_main_routes(app):
         # Get current time for the template
         now = datetime.now()
 
+        # Get latest data timestamp for display
+        DASHBOARD_DIR = 'nbss_data'
+        latest_timestamp = None
+
+        if os.path.exists(DASHBOARD_DIR):
+            folders = [f for f in os.listdir(DASHBOARD_DIR) if os.path.isdir(os.path.join(DASHBOARD_DIR, f))]
+            if folders:
+                # Sort folders (timestamps) in descending order to get the latest
+                folders.sort(reverse=True)
+                latest_timestamp = folders[0]
+
+                # Try to get the actual date from summary.json if it exists
+                summary_path = os.path.join(DASHBOARD_DIR, latest_timestamp, 'summary.json')
+                if os.path.exists(summary_path):
+                    try:
+                        import json
+                        with open(summary_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                            if 'date' in data:
+                                latest_timestamp = data['date']  # Use actual date instead of folder name
+                    except Exception as e:
+                        logger.error(f"Error reading dashboard summary: {e}")
+
         return render_template('dashboard.html',
                                active_tab='dashboard',
                                project_budget=PROJECT_BUDGET,
                                refresh_interval=DASHBOARD_REFRESH_INTERVAL,
-                               now=now)
+                               now=now,
+                               latest_timestamp=latest_timestamp)

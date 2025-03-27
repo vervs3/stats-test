@@ -41,15 +41,6 @@ function initDashboard() {
 
 // Set up dashboard event listeners
 function setupEventListeners() {
-    // Manual refresh button
-    const refreshBtn = document.getElementById('manual-refresh');
-    if (refreshBtn) {
-        refreshBtn.addEventListener('click', function() {
-            console.log("Manual refresh triggered");
-            fetchDashboardData();
-        });
-    }
-
     // Data collection button
     const collectionBtn = document.getElementById('trigger-collection');
     if (collectionBtn) {
@@ -81,9 +72,6 @@ function updateUIWithFallbackData() {
     // Update progress bar
     updateProgressBar(950, 18000);
 
-    // Update last refresh time
-    updateLastRefreshTime();
-
     // Initialize empty charts
     initEmptyCharts();
 }
@@ -114,14 +102,6 @@ function updateProgressBar(value, total) {
         const percent = Math.min(100, Math.max(0, (value / total) * 100));
         progressBar.style.width = `${percent}%`;
         progressBar.textContent = `${Math.round(percent)}%`;
-    }
-}
-
-// Update last refresh time
-function updateLastRefreshTime() {
-    const element = document.getElementById('last-refresh-time');
-    if (element) {
-        element.textContent = new Date().toLocaleTimeString();
     }
 }
 
@@ -196,11 +176,7 @@ function fetchDashboardData() {
     console.log("Fetching dashboard data");
 
     // Show loading state
-    const refreshBtn = document.getElementById('manual-refresh');
-    if (refreshBtn) {
-        refreshBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>';
-        refreshBtn.disabled = true;
-    }
+    document.getElementById('last-refresh-time').classList.add('text-muted');
 
     // Fetch data from API
     fetch('/api/dashboard/data')
@@ -217,6 +193,11 @@ function fetchDashboardData() {
             if (result.success && result.data) {
                 // Process and display the data
                 displayDashboardData(result.data);
+
+                // Store the latest timestamp in the data-attribute
+                if (result.data.latest_timestamp) {
+                    document.body.dataset.latestTimestamp = result.data.latest_timestamp;
+                }
             } else {
                 console.error("API returned success: false or no data");
             }
@@ -225,14 +206,8 @@ function fetchDashboardData() {
             console.error("Error fetching dashboard data:", error);
         })
         .finally(() => {
-            // Reset button state
-            if (refreshBtn) {
-                refreshBtn.innerHTML = '<i class="bi bi-arrow-clockwise"></i>';
-                refreshBtn.disabled = false;
-            }
-
-            // Always update the refresh time
-            updateLastRefreshTime();
+            // Remove loading state
+            document.getElementById('last-refresh-time').classList.remove('text-muted');
         });
 }
 
@@ -243,6 +218,12 @@ function displayDashboardData(data) {
     // Update summary metrics from latest data
     if (data.latest_data) {
         updateSummaryMetrics(data.latest_data);
+
+        // Update the last refresh timestamp to show the date from latest data
+        const lastRefreshElement = document.getElementById('last-refresh-time');
+        if (lastRefreshElement && data.latest_data.date) {
+            lastRefreshElement.textContent = data.latest_data.date;
+        }
     }
 
     // Display time spent chart
@@ -342,107 +323,292 @@ function displayTimeSpentChart(timeSeriesData) {
             window.timeSpentChart.destroy();
         }
 
+        // Store original data for click handler
+        window.originalTimeSeriesData = {
+            dates: [...timeSeriesData.dates],
+            actualData: [...timeSeriesData.actual_time_spent]
+        };
+
         // Prepare data
         const dates = [...timeSeriesData.dates];
         const actualData = [...timeSeriesData.actual_time_spent];
         const projectedData = [...timeSeriesData.projected_time_spent];
 
-        // Add forecast data
-        const forecastData = createSimpleForecast(dates, actualData);
+        // Create complete forecast data that extends all lines to the end of 2025
+        const extendedData = createExtendedForecastData(dates, actualData, projectedData);
 
         // Create datasets
         const datasets = [
             {
                 label: 'Фактические трудозатраты',
-                data: actualData,
+                data: extendedData.actualExtended,
                 backgroundColor: 'rgba(255, 99, 132, 0.2)',
                 borderColor: 'rgba(255, 99, 132, 1)',
-                borderWidth: 2
+                borderWidth: 2,
+                pointBackgroundColor: 'rgba(255, 99, 132, 1)',
+                pointBorderColor: '#fff',
+                pointRadius: function(context) {
+                    // Always show points for original data
+                    return context.dataIndex < dates.length ? 6 : 0;
+                },
+                pointHoverRadius: function(context) {
+                    return context.dataIndex < dates.length ? 8 : 0;
+                },
+                pointHitRadius: 10, // Larger hit area for easier clicking
+                pointStyle: 'circle',
+                pointHoverBorderWidth: 2,
+                tension: 0.1
             },
             {
                 label: 'Прогнозные трудозатраты',
-                data: projectedData,
+                data: extendedData.projectedExtended,
                 backgroundColor: 'rgba(54, 162, 235, 0.2)',
                 borderColor: 'rgba(54, 162, 235, 1)',
-                borderWidth: 2
+                borderWidth: 2,
+                pointBackgroundColor: 'rgba(54, 162, 235, 1)',
+                pointBorderColor: '#fff',
+                pointRadius: 0, // No points to reduce visual clutter
+                pointHoverRadius: 0,
+                tension: 0.1
             }
         ];
 
-        // Add forecast dataset if available
-        if (forecastData && forecastData.dates && forecastData.values) {
-            // Create combined datasets for forecast
-            const combinedDates = forecastData.dates;
-            const forecastValues = forecastData.values;
-
-            // Add forecast dataset with green color
+        // Add forecast dataset (green dashed line)
+        if (extendedData.forecastData && extendedData.forecastData.length > 0) {
             datasets.push({
                 label: 'Прогноз до конца 2025',
-                data: forecastValues,
+                data: extendedData.forecastData,
                 backgroundColor: 'rgba(75, 192, 192, 0.2)',
                 borderColor: 'rgba(75, 192, 192, 1)',
                 borderWidth: 2,
-                borderDash: [5, 5],
-                pointRadius: 0
-            });
-
-            // Use combined dates for the chart
-            window.timeSpentChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: combinedDates,
-                    datasets: datasets
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true
-                        }
-                    },
-                    onClick: handleTimeSpentChartClick
-                }
-            });
-        } else {
-            // Fallback to basic chart without forecast
-            window.timeSpentChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: dates,
-                    datasets: datasets.slice(0, 2) // Just use actual and projected
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true
-                        }
-                    },
-                    onClick: handleTimeSpentChartClick
-                }
+                borderDash: [5, 5], // Dashed line for forecast
+                pointRadius: 0, // No points for the forecast line
+                pointHoverRadius: 0,
+                fill: false, // Don't fill area under the line
+                tension: 0.1
             });
         }
+
+        // Map of original indices to extended indices
+        const indexMap = {};
+        for (let i = 0; i < dates.length; i++) {
+            const date = dates[i];
+            const extendedIndex = extendedData.allDates.indexOf(date);
+            if (extendedIndex !== -1) {
+                indexMap[extendedIndex] = i;
+            }
+        }
+
+        // Store the index map for click handling
+        window.dateIndexMap = indexMap;
+
+        // Create chart
+        window.timeSpentChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: extendedData.allDates,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Человекодни'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Дата'
+                        },
+                        ticks: {
+                            maxRotation: 45,
+                            minRotation: 45,
+                            maxTicksLimit: 20
+                        }
+                    }
+                },
+                plugins: {
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false,
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.dataset.label || '';
+                                const value = context.parsed.y;
+                                if (value === null) return '';
+                                return `${label}: ${value.toFixed(0)} человекодней`;
+                            }
+                        }
+                    },
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 15
+                        }
+                    }
+                },
+                hover: {
+                    mode: 'nearest',
+                    intersect: true
+                },
+                onClick: handleTimeSpentChartClick,
+                interaction: {
+                    mode: 'nearest',
+                    axis: 'x',
+                    intersect: false
+                },
+                elements: {
+                    point: {
+                        // Make points more visually prominent
+                        radius: 5,
+                        hitRadius: 10,
+                        hoverRadius: 7
+                    }
+                }
+            }
+        });
+
+        // Add click handler directly to the chart element for better interactivity
+        canvas.onclick = function(evt) {
+            console.log('Canvas click event triggered');
+            const activePoints = window.timeSpentChart.getElementsAtEventForMode(
+                evt, 'nearest', { intersect: true }, true
+            );
+
+            if (activePoints.length > 0) {
+                const clickedIndex = activePoints[0].index;
+                handlePointClick(clickedIndex);
+            }
+        };
+
+        console.log("Time spent chart initialized with click handlers");
     } catch (error) {
         console.error("Error creating time spent chart:", error);
-
-        try {
-            // Fallback to direct canvas drawing
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.font = '16px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillStyle = '#333';
-            ctx.fillText('Не удалось построить график', canvas.width / 2, canvas.height / 2);
-            ctx.fillText(`Доступно ${timeSeriesData.dates.length} точек данных`, canvas.width / 2, canvas.height / 2 + 30);
-        } catch (e) {
-            console.error("Fallback drawing also failed:", e);
-        }
     }
 }
 
-// Create simple forecast data
-function createSimpleForecast(dates, values) {
+// Create extended forecast data that goes to the end of 2025
+function createExtendedForecast(dates, actualData, projectedData) {
+    if (!dates || !dates.length || !actualData || !actualData.length) {
+        return {
+            dates: dates,
+            actualData: actualData,
+            projectedData: projectedData
+        };
+    }
+
+    try {
+        // Get last date and value from actual data
+        const lastDate = new Date(dates[dates.length - 1]);
+        const lastActual = actualData[actualData.length - 1];
+
+        // End date (December 31, 2025)
+        const endDate = new Date('2025-12-31');
+
+        // If last date is already at or past end date, no need to extend
+        if (lastDate >= endDate) {
+            return {
+                dates: dates,
+                actualData: actualData,
+                projectedData: projectedData
+            };
+        }
+
+        // Create extended arrays starting with existing data
+        const extendedDates = [...dates];
+        const extendedActual = [...actualData];
+        const extendedProjected = [...projectedData];
+
+        // Calculate growth rate from actual data
+        // Use linear regression for better accuracy
+        let growthRate = 0;
+        if (dates.length >= 2) {
+            // Convert dates to numerical values (days since first date)
+            const xValues = [];
+            const yValues = [];
+            const firstDate = new Date(dates[0]);
+
+            for (let i = 0; i < dates.length; i++) {
+                const currentDate = new Date(dates[i]);
+                const daysDiff = Math.round((currentDate - firstDate) / (1000 * 60 * 60 * 24));
+                xValues.push(daysDiff);
+                yValues.push(actualData[i]);
+            }
+
+            // Calculate linear regression (slope)
+            const n = xValues.length;
+            let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+            for (let i = 0; i < n; i++) {
+                sumX += xValues[i];
+                sumY += yValues[i];
+                sumXY += xValues[i] * yValues[i];
+                sumXX += xValues[i] * xValues[i];
+            }
+
+            if (n * sumXX - sumX * sumX !== 0) {
+                const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+                growthRate = slope * 7; // Weekly growth rate
+            }
+        }
+
+        // Ensure growth rate is positive and reasonable
+        growthRate = Math.max(5, growthRate);
+
+        // Get budget for projecting the end value
+        const budget = getProjectBudget();
+
+        // Generate weekly data points to end of 2025
+        let currentDate = new Date(lastDate);
+        let currentActual = lastActual;
+
+        // Move to next week
+        currentDate.setDate(currentDate.getDate() + 7);
+
+        // Add points until end of 2025
+        while (currentDate <= endDate) {
+            // Format date as YYYY-MM-DD
+            const dateStr = currentDate.toISOString().split('T')[0];
+
+            // Add growth to actual value
+            currentActual += growthRate;
+
+            // Calculate projected value based on date relative to year
+            const daysInYear = 365;
+            const dayOfYear = Math.round((currentDate - new Date('2025-01-01')) / (1000 * 60 * 60 * 24));
+            const projectedValue = (budget / daysInYear) * dayOfYear;
+
+            // Add to extended arrays
+            extendedDates.push(dateStr);
+            extendedActual.push(currentActual);
+            extendedProjected.push(projectedValue);
+
+            // Move to next week
+            currentDate.setDate(currentDate.getDate() + 7);
+        }
+
+        return {
+            dates: extendedDates,
+            actualData: extendedActual,
+            projectedData: extendedProjected
+        };
+    } catch (error) {
+        console.error("Error creating extended forecast:", error);
+        return {
+            dates: dates,
+            actualData: actualData,
+            projectedData: projectedData
+        };
+    }
+}
+
+// Create forecast data that extends to end of 2025
+function createForecastToEndOfYear(dates, values) {
     if (!dates || !dates.length || !values || !values.length) {
         return null;
     }
@@ -454,6 +620,11 @@ function createSimpleForecast(dates, values) {
 
         // End date (December 31, 2025)
         const endDate = new Date('2025-12-31');
+
+        // Check if we're already at or past end date
+        if (lastDate >= endDate) {
+            return { values: [], extraDates: [] };
+        }
 
         // Weekly growth rate (can be calculated from data or use default)
         let growthRate = 5; // Default: 5 person-days per week
@@ -474,11 +645,14 @@ function createSimpleForecast(dates, values) {
             growthRate = Math.max(1, growthRate);
         }
 
-        // Create forecast arrays starting with actual data
-        const forecastDates = [...dates];
-        const forecastValues = [...values];
+        // Create forecast arrays
+        const forecastValues = [];
+        const forecastDates = [];
 
-        // Generate weekly data points from last date to end of 2025
+        // Start with the last actual data point
+        forecastValues.push(lastValue);
+
+        // Then add new points from the next week until end of 2025
         let currentDate = new Date(lastDate);
         let currentValue = lastValue;
 
@@ -490,21 +664,25 @@ function createSimpleForecast(dates, values) {
             // Format date as YYYY-MM-DD
             const dateStr = currentDate.toISOString().split('T')[0];
 
+            // Add to forecast dates
+            forecastDates.push(dateStr);
+
             // Add growth to current value
             currentValue += growthRate;
 
-            // Add to forecast arrays
-            forecastDates.push(dateStr);
+            // Add to forecast values (for the forecast line)
             forecastValues.push(currentValue);
 
             // Move to next week
             currentDate.setDate(currentDate.getDate() + 7);
         }
 
+        // Remove the first point (it's the duplicated last actual point)
+        forecastValues.shift();
+
         return {
-            dates: forecastDates,
             values: forecastValues,
-            originalDataCount: dates.length
+            extraDates: forecastDates
         };
     } catch (error) {
         console.error("Error creating forecast data:", error);
@@ -512,34 +690,162 @@ function createSimpleForecast(dates, values) {
     }
 }
 
+// Create extended forecast data that makes all lines go to end of 2025
+function createExtendedForecastData(dates, actualData, projectedData) {
+    if (!dates || !dates.length || !actualData || !actualData.length) {
+        return {
+            allDates: dates,
+            actualExtended: actualData,
+            projectedExtended: projectedData,
+            forecastData: []
+        };
+    }
+
+    try {
+        // Get budget to calculate proper projections
+        const budget = getProjectBudget();
+
+        // Get last date and values from actual data
+        const lastDate = new Date(dates[dates.length - 1]);
+        const lastActualValue = actualData[actualData.length - 1];
+        const lastProjectedValue = projectedData[projectedData.length - 1];
+
+        // End date (December 31, 2025)
+        const endDate = new Date('2025-12-31');
+
+        // If last date is already at or past end date, no need to extend
+        if (lastDate >= endDate) {
+            return {
+                allDates: dates,
+                actualExtended: actualData,
+                projectedExtended: projectedData,
+                forecastData: []
+            };
+        }
+
+        // Store all dates - start with existing dates
+        const allDates = [...dates];
+
+        // Create extended arrays for each dataset
+        const actualExtended = [...actualData];
+        const projectedExtended = [...projectedData];
+
+        // Create forecast data array that starts exactly at the last actual point
+        const forecastData = new Array(allDates.length).fill(null);
+        forecastData[forecastData.length - 1] = lastActualValue; // Set last point
+
+        // Calculate growth rate from actual data
+        let growthRate = 0;
+        if (dates.length >= 2) {
+            // Calculate using linear regression
+            const xValues = [];
+            const yValues = [];
+            const firstDate = new Date(dates[0]);
+
+            for (let i = 0; i < dates.length; i++) {
+                const currentDate = new Date(dates[i]);
+                const daysDiff = Math.round((currentDate - firstDate) / (1000 * 60 * 60 * 24));
+                xValues.push(daysDiff);
+                yValues.push(actualData[i]);
+            }
+
+            // Calculate linear regression (slope)
+            const n = xValues.length;
+            let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+            for (let i = 0; i < n; i++) {
+                sumX += xValues[i];
+                sumY += yValues[i];
+                sumXY += xValues[i] * yValues[i];
+                sumXX += xValues[i] * xValues[i];
+            }
+
+            if (n * sumXX - sumX * sumX !== 0) {
+                const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+                growthRate = slope * 7; // Weekly growth rate
+            }
+        }
+
+        // Ensure growth rate is positive and reasonable
+        growthRate = Math.max(5, growthRate);
+
+        // Generate weekly data points to end of 2025
+        let currentDate = new Date(lastDate);
+        let currentActualForecast = lastActualValue;
+
+        // Move to next week
+        currentDate.setDate(currentDate.getDate() + 7);
+
+        // Add points until end of 2025
+        while (currentDate <= endDate) {
+            // Format date as YYYY-MM-DD
+            const dateStr = currentDate.toISOString().split('T')[0];
+
+            // Add date to all dates array
+            allDates.push(dateStr);
+
+            // Calculate the projected value based on budget and day of year
+            const daysInYear = 365;
+            const startOfYear = new Date('2025-01-01');
+            const dayOfYear = Math.round((currentDate - startOfYear) / (1000 * 60 * 60 * 24));
+            const projectedValue = (budget / daysInYear) * dayOfYear;
+
+            // Add growth to actual forecast value
+            currentActualForecast += growthRate;
+
+            // Add to extended arrays
+            actualExtended.push(null); // No actual data for future dates
+            projectedExtended.push(projectedValue); // Projected continues to end of year
+            forecastData.push(currentActualForecast); // Forecast grows from last actual point
+
+            // Move to next week
+            currentDate.setDate(currentDate.getDate() + 7);
+        }
+
+        return {
+            allDates: allDates,
+            actualExtended: actualExtended,
+            projectedExtended: projectedExtended,
+            forecastData: forecastData
+        };
+    } catch (error) {
+        console.error("Error creating extended forecast data:", error);
+        return {
+            allDates: dates,
+            actualExtended: actualData,
+            projectedExtended: projectedData,
+            forecastData: []
+        };
+    }
+}
+
 // Handle time spent chart click
 function handleTimeSpentChartClick(event, elements) {
-    // Only handle clicks on data points
     if (!elements || !elements.length) return;
 
-    // Get clicked element info
-    const clickedIndex = elements[0].index;
-    const clickedChart = this.chart;
-    const labels = clickedChart.data.labels;
+    // Get the clicked element
+    const index = elements[0].index;
 
-    // Check if this is an actual data point (not forecast)
-    if (clickedIndex < timeSeriesData.dates.length) {
-        // Get the date
-        const date = labels[clickedIndex];
+    // Check if we clicked on an actual data point (not forecast)
+    if (index < window.timeSeriesData.dates.length) {
+        const clickedDate = window.timeSeriesData.dates[index];
 
-        // Convert to folder format (YYYYMMDD)
+        // Get the timestamp for folder navigation
         try {
-            const dateObj = new Date(date);
+            const dateObj = new Date(clickedDate);
             const year = dateObj.getFullYear();
             const month = String(dateObj.getMonth() + 1).padStart(2, '0');
             const day = String(dateObj.getDate()).padStart(2, '0');
             const folderDate = `${year}${month}${day}`;
 
-            // Navigate to dashboard view for this date
+            console.log(`Clicked on date ${clickedDate}, navigating to folder ${folderDate}`);
+
+            // Navigate to the detailed view for this date
             window.location.href = `/view/dashboard/${folderDate}`;
         } catch (error) {
-            console.error("Error parsing date for navigation:", error);
+            console.error("Error processing chart click:", error);
         }
+    } else {
+        console.log("Clicked on forecast data point, no navigation");
     }
 }
 
@@ -583,6 +889,11 @@ function displayOpenTasksChart(openTasksData, timestampStr) {
 
         // Generate colors for each project
         const backgroundColor = projects.map((_, i) => colors[i % colors.length]);
+
+        // If no timestamp provided, use the one from the DOM
+        if (!timestampStr) {
+            timestampStr = document.body.dataset.latestTimestamp || '';
+        }
 
         // Create chart
         window.openTasksChart = new Chart(ctx, {

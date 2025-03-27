@@ -52,6 +52,15 @@ def collect_daily_data():
             logger.error("No CLM issues found")
             return
 
+        # Process CLM issues to get time spent directly
+        # This is important to include time logged against CLM tickets themselves
+        clm_time_spent_hours = 0
+        for issue in clm_issues:
+            time_spent = issue.get('fields', {}).get('timespent', 0) or 0
+            clm_time_spent_hours += time_spent / 3600
+
+        logger.info(f"Time spent directly on CLM issues: {clm_time_spent_hours} hours")
+
         # Get related issues
         est_issues, improvement_issues, implementation_issues = analyzer.get_clm_related_issues(clm_issues)
 
@@ -61,10 +70,17 @@ def collect_daily_data():
             df = process_issues_data(implementation_issues)
 
         # Calculate time spent in person-days (assuming 8 hours per day)
-        total_time_spent_hours = 0
+        implementation_time_spent_hours = 0
         if df is not None and not df.empty:
-            total_time_spent_hours = df['time_spent_hours'].sum()
+            implementation_time_spent_hours = df['time_spent_hours'].sum()
+
+        # Add the time spent on CLM issues to the total
+        total_time_spent_hours = implementation_time_spent_hours + clm_time_spent_hours
         total_time_spent_days = total_time_spent_hours / 8
+
+        logger.info(f"Total time spent: {total_time_spent_hours} hours ({total_time_spent_days} days)")
+        logger.info(f"  - Implementation issues: {implementation_time_spent_hours} hours")
+        logger.info(f"  - CLM issues: {clm_time_spent_hours} hours")
 
         # Calculate projected time spent
         # Budget = PROJECT_BUDGET person-days, project duration = 2025 year
@@ -189,6 +205,8 @@ def collect_daily_data():
             'est_issues_count': len(est_issues),
             'improvement_issues_count': len(improvement_issues),
             'implementation_issues_count': len(implementation_issues),
+            'clm_time_spent_hours': float(clm_time_spent_hours),
+            'implementation_time_spent_hours': float(implementation_time_spent_hours),
             'refresh_interval': DASHBOARD_REFRESH_INTERVAL  # Include the refresh interval
         }
 
