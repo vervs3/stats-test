@@ -2,6 +2,7 @@
 import { updateMetrics, updateProgressBar, showLoadingState, hideLoadingState } from './ui.js';
 import { updateTimeSpentChart } from './charts/timeSpentChart.js';
 import { updateOpenTasksChart } from './charts/openTasksChart.js';
+import { updateClosedTasksChart } from './charts/closedTasksChart.js';
 
 /**
  * Fetch dashboard data from the server
@@ -82,15 +83,20 @@ function displayDashboardData(data) {
         updateOpenTasksChart(data.open_tasks_data, data.latest_timestamp || '');
     } else {
         console.warn("No open tasks data available");
+        // Инициализировать с пустыми данными чтобы показать пустой график
+        updateOpenTasksChart({}, data.latest_timestamp || '');
     }
 
     // Display closed tasks chart
+    console.log("Closed tasks data:", data.closed_tasks_data);
     if (data.closed_tasks_data && Object.keys(data.closed_tasks_data).length > 0) {
         console.log(`Displaying closed tasks chart with ${Object.keys(data.closed_tasks_data).length} projects`);
-        updateClosedTasksChart(data.closed_tasks_data, data.latest_timestamp || '');
     } else {
         console.warn("No closed tasks data available");
     }
+
+    // Всегда обновляем график закрытых задач, даже если данных нет
+    updateClosedTasksChart(data.closed_tasks_data || {}, data.latest_timestamp || '');
 }
 
 /**
@@ -222,6 +228,9 @@ function createClosedTasksJQL(project, timestamp) {
     params.append('is_clm', 'true');
     params.append('timestamp', timestamp);
 
+    // Explicitly request count-based (not time-based) data for closed tasks
+    params.append('count_based', 'true');
+
     // Fetch JQL from server
     fetch(`/jql/special?${params.toString()}`)
         .then(response => {
@@ -243,6 +252,5 @@ function createClosedTasksJQL(project, timestamp) {
             alert('Ошибка при создании JQL: ' + error.message);
         });
 }
-
 
 export { fetchDashboardData, triggerDataCollection, createOpenTasksJQL, createClosedTasksJQL, updateSummaryMetrics };

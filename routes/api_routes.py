@@ -444,17 +444,6 @@ def register_api_routes(app):
                         # Original time-based query
                         jql = f'project = {project} AND status in (Open, "NEW") AND timespent > 0'
                         logger.info(f"Using time-based open tasks query")
-                elif chart_type == 'clm_issues':
-                    jql = 'project = CLM'
-                elif chart_type == 'est_issues':
-                    jql = 'project = EST'
-                elif chart_type == 'improvement_issues':
-                    jql = 'issuetype = "Improvement from CLM"'
-                elif chart_type in ['linked_issues', 'filtered_issues', 'project_issues']:
-                    if project != 'all':
-                        jql = f'project = {project}'
-                    else:
-                        jql = ''  # Empty query as fallback
                 elif chart_type == 'closed_tasks':
                     # Query for closed tasks without comments, attachments, and links
                     if count_based:
@@ -470,6 +459,17 @@ def register_api_routes(app):
                         # Fallback to basic closed status query
                         jql = f'project = {project} AND status in (Closed, Done, Resolved, \"Выполнено\")'
                         logger.info(f"Using basic closed status query")
+                elif chart_type == 'clm_issues':
+                    jql = 'project = CLM'
+                elif chart_type == 'est_issues':
+                    jql = 'project = EST'
+                elif chart_type == 'improvement_issues':
+                    jql = 'issuetype = "Improvement from CLM"'
+                elif chart_type in ['linked_issues', 'filtered_issues', 'project_issues']:
+                    if project != 'all':
+                        jql = f'project = {project}'
+                    else:
+                        jql = ''  # Empty query as fallback
                 else:
                     jql = ''  # Empty query as fallback
 
@@ -510,6 +510,19 @@ def register_api_routes(app):
                     conditions.append("status in (Open, \"NEW\")")
                     conditions.append("timespent > 0")
                     logger.info(f"Using time-based open tasks query (standard mode)")
+            elif chart_type == 'closed_tasks':
+                # Add closed statuses and empty comments/attachments/links conditions
+                closed_statuses = "status in (Closed, Done, Resolved, \"Выполнено\")"
+                no_comments = "comment is EMPTY"
+                no_attachments = "attachments is EMPTY"
+                no_links = "issueFunction not in linkedIssuesOf(\"project is not EMPTY\")"
+
+                conditions.append(closed_statuses)
+                conditions.append(no_comments)
+                conditions.append(no_attachments)
+                conditions.append(no_links)
+
+                logger.info(f"Using query for closed tasks (standard mode)")
 
             # Add time filters if specified and not ignoring period and not a CLM summary chart type
             if (date_from or date_to) and not ignore_period and chart_type not in clm_summary_chart_types:

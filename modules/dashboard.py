@@ -314,6 +314,10 @@ def get_dashboard_data():
                                 if 'open_tasks_data' not in data:
                                     data['open_tasks_data'] = {}
 
+                                # Make sure closed_tasks_data exists
+                                if 'closed_tasks_data' not in data:
+                                    data['closed_tasks_data'] = {}
+
                                 all_data.append(data)
                                 logger.info(f"Loaded dashboard data from folder: {item}")
                     except Exception as e:
@@ -350,6 +354,9 @@ def get_dashboard_data():
         closed_tasks_data = {}
         if latest_data:
             closed_tasks_data = latest_data.get('closed_tasks_data', {})
+            # Если ключ отсутствует или пустой, логируем это для отладки
+            if not closed_tasks_data:
+                logger.warning(f"No closed_tasks_data found in latest data for timestamp {latest_date}")
 
         # Get refresh interval from latest data or use the default
         refresh_interval = latest_data.get('refresh_interval',
@@ -357,10 +364,14 @@ def get_dashboard_data():
 
         logger.info(f"Returning dashboard data with latest_timestamp: {latest_date}")
 
+        # Логируем данные для закрытых задач для отладки
+        logger.info(f"Closed tasks data: {closed_tasks_data}")
+
         return {
             'time_series': time_series,
             'latest_data': latest_data,
             'open_tasks_data': open_tasks_data,
+            'closed_tasks_data': closed_tasks_data,  # Добавляем данные о закрытых задачах
             'latest_timestamp': latest_date,
             'has_raw_data': has_raw_data,
             'refresh_interval': refresh_interval
@@ -371,7 +382,7 @@ def get_dashboard_data():
             'time_series': {'dates': [], 'actual_time_spent': [], 'projected_time_spent': []},
             'latest_data': None,
             'open_tasks_data': {},
-            'closed_tasks_data': closed_tasks_data,  # Add this line
+            'closed_tasks_data': {},  # Пустой словарь как запасной вариант
             'latest_timestamp': None,
             'has_raw_data': False,
             'refresh_interval': DASHBOARD_REFRESH_INTERVAL
