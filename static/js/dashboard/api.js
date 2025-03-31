@@ -91,12 +91,12 @@ function displayDashboardData(data) {
     console.log("Closed tasks data:", data.closed_tasks_data);
     if (data.closed_tasks_data && Object.keys(data.closed_tasks_data).length > 0) {
         console.log(`Displaying closed tasks chart with ${Object.keys(data.closed_tasks_data).length} projects`);
+        updateClosedTasksChart(data.closed_tasks_data, data.latest_timestamp || '');
     } else {
         console.warn("No closed tasks data available");
+        // Инициализировать с пустыми данными
+        updateClosedTasksChart({}, data.latest_timestamp || '');
     }
-
-    // Всегда обновляем график закрытых задач, даже если данных нет
-    updateClosedTasksChart(data.closed_tasks_data || {}, data.latest_timestamp || '');
 }
 
 /**
@@ -223,13 +223,19 @@ function createOpenTasksJQL(project, timestamp) {
 function createClosedTasksJQL(project, timestamp) {
     // Create URL parameters
     const params = new URLSearchParams();
+
+    // Явно указываем проект, который был выбран на графике
     params.append('project', encodeURIComponent(project));
     params.append('chart_type', 'closed_tasks');
     params.append('is_clm', 'true');
+
+    // Явно указываем временную метку
     params.append('timestamp', timestamp);
 
-    // Explicitly request count-based (not time-based) data for closed tasks
+    // Убедимся, что используем count-based запрос
     params.append('count_based', 'true');
+
+    console.log(`Creating JQL for closed tasks: project=${project}, timestamp=${timestamp}`);
 
     // Fetch JQL from server
     fetch(`/jql/special?${params.toString()}`)
@@ -242,6 +248,19 @@ function createClosedTasksJQL(project, timestamp) {
         .then(data => {
             console.log("Received JQL for closed tasks:", data.jql);
 
+            // Проверим, содержит ли JQL упоминание проекта
+            if (data.jql && !data.jql.includes(project) && !data.jql.includes('issue in')) {
+                console.error(`Warning: Generated JQL does not include project ${project}!`);
+
+                // В крайнем случае, создаем свой запрос
+                const fallbackJql = `project = ${project} AND status in (Closed, Done, Resolved, "Выполнено") AND comment is EMPTY AND attachments is EMPTY AND issueFunction not in linkedIssuesOf("project is not EMPTY")`;
+                console.log("Using fallback JQL:", fallbackJql);
+
+                // Обновляем data.jql и url
+                data.jql = fallbackJql;
+                data.url = "https://jira.nexign.com/issues/?jql=" + encodeURIComponent(fallbackJql);
+            }
+
             // Import UI module to show modal
             import('./ui.js').then(({ showJqlModal }) => {
                 showJqlModal(data.jql, data.url);
@@ -249,7 +268,17 @@ function createClosedTasksJQL(project, timestamp) {
         })
         .catch(error => {
             console.error("Error creating JQL for closed tasks:", error);
-            alert('Ошибка при создании JQL: ' + error.message);
+
+            // В случае ошибки, создаем fallback запрос
+            const fallbackJql = `project = ${project} AND status in (Closed, Done, Resolved, "Выполнено") AND comment is EMPTY AND attachments is EMPTY AND issueFunction not in linkedIssuesOf("project is not EMPTY")`;
+            const fallbackUrl = "https://jira.nexign.com/issues/?jql=" + encodeURIComponent(fallbackJql);
+
+            console.log("Using fallback JQL due to error:", fallbackJql);
+
+            // Используем showJqlModal через импорт
+            import('./ui.js').then(({ showJqlModal }) => {
+                showJqlModal(fallbackJql, fallbackUrl);
+            });
         });
 }
 

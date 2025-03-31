@@ -101,7 +101,6 @@
             </div>
         </div>
 
-        <!-- Add this after the open tasks chart -->
         <div class="row mt-4">
             <div class="col-md-12">
                 <div class="card">
@@ -111,7 +110,12 @@
                     <div class="card-body">
                         <p class="text-muted">Задачи в статусе Closed/Done/Resolved, у которых отсутствуют комментарии, вложения и любые связи с другими задачами. Нажмите на столбец для просмотра задач в Jira.</p>
                         <div class="chart-container">
-                            <canvas id="closedTasksChart" height="300"></canvas>
+                            <div id="closed-tasks-container" class="chart-wrapper">
+                                <canvas id="closedTasksChart" height="300"></canvas>
+                            </div>
+                        </div>
+                        <div id="closed-tasks-empty-message" class="alert alert-info" style="display: none;">
+                            <p class="text-center">Нет закрытых задач без комментариев, вложений и связей</p>
                         </div>
                     </div>
                 </div>

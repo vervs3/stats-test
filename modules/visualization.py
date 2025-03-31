@@ -477,7 +477,13 @@ def create_closed_tasks_without_links_chart(df, output_dir, logger):
         logger.info(f"FOUND {len(closed_tasks)} CLOSED TASKS WITHOUT COMMENTS, ATTACHMENTS, AND LINKS")
 
         if len(closed_tasks) > 0:
-            logger.info(f"SAMPLE CLOSED TASKS: {closed_tasks['issue_key'].head(5).tolist()}")
+            # Вывести пример задач для отладки
+            sample_keys = closed_tasks['issue_key'].head(5).tolist()
+            logger.info(f"SAMPLE CLOSED TASKS: {sample_keys}")
+
+            # Подробная информация о статусах
+            status_counts = closed_tasks['status'].value_counts()
+            logger.info(f"Status distribution: {status_counts.to_dict()}")
 
         # Always create a chart, even if empty
         plt.figure(figsize=(12, 7))
@@ -514,9 +520,29 @@ def create_closed_tasks_without_links_chart(df, output_dir, logger):
         if not os.path.exists(metrics_dir):
             os.makedirs(metrics_dir)
 
+        # Сохраняем данные по проектам и ключи задач
+        project_issue_keys = {}
+        for project in closed_tasks['project'].unique():
+            project_tasks = closed_tasks[closed_tasks['project'] == project]
+            project_issue_keys[project] = project_tasks['issue_key'].tolist()
+            # Для отладки
+            logger.info(
+                f"Project {project}: {len(project_tasks)} closed tasks without comments, attachments, and links")
+
+        # Получаем все ключи задач
+        all_issue_keys = closed_tasks['issue_key'].tolist() if not closed_tasks.empty else []
+
+        # Проверим соответствие ключей проектам
+        for project, keys in project_issue_keys.items():
+            for key in keys[:5]:  # Проверяем первые 5 ключей
+                if not key.startswith(f"{project}-"):
+                    logger.warning(f"Warning: Key {key} does not match project {project}")
+
         closed_tasks_data = {
             'count': len(closed_tasks),
-            'by_project': closed_tasks.groupby('project').size().to_dict() if not closed_tasks.empty else {}
+            'by_project': closed_tasks.groupby('project').size().to_dict() if not closed_tasks.empty else {},
+            'issue_keys': all_issue_keys,
+            'by_project_issue_keys': project_issue_keys
         }
 
         closed_tasks_metrics_path = os.path.join(metrics_dir, 'closed_tasks_no_links.json')

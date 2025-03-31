@@ -201,6 +201,10 @@ def register_api_routes(app):
                 issue_keys_dir = os.path.join(DASHBOARD_DIR, timestamp, 'data')
                 clm_keys_path = os.path.join(issue_keys_dir, 'clm_issue_keys.json')
                 logger.info(f"Looking for dashboard issue keys at: {clm_keys_path}")
+
+                # Для dashboard также проверим metrics/closed_tasks_no_links.json
+                metrics_dir = os.path.join(DASHBOARD_DIR, timestamp, 'metrics')
+                closed_tasks_metrics_path = os.path.join(metrics_dir, 'closed_tasks_no_links.json')
             else:
                 # For regular CLM analysis, look in CHARTS_DIR
                 CHARTS_DIR = 'jira_charts'
@@ -208,6 +212,43 @@ def register_api_routes(app):
                 clm_keys_path = os.path.join(issue_keys_dir, 'clm_issue_keys.json')
                 logger.info(f"Looking for CLM analysis issue keys at: {clm_keys_path}")
 
+                # Для CLM analysis также проверим metrics/closed_tasks_no_links.json
+                metrics_dir = os.path.join(CHARTS_DIR, timestamp, 'metrics')
+                closed_tasks_metrics_path = os.path.join(metrics_dir, 'closed_tasks_no_links.json')
+
+            # Специальная обработка для закрытых задач с проверкой файла метрик
+            if chart_type == 'closed_tasks' and os.path.exists(closed_tasks_metrics_path):
+                logger.info(f"Found closed tasks metrics file: {closed_tasks_metrics_path}")
+                try:
+                    with open(closed_tasks_metrics_path, 'r', encoding='utf-8') as f:
+                        closed_tasks_data = json.load(f)
+
+                        # Подробное логирование для отладки
+                        if 'by_project_issue_keys' in closed_tasks_data:
+                            logger.info(
+                                f"Available projects in closed tasks: {list(closed_tasks_data.get('by_project_issue_keys', {}).keys())}")
+
+                        # Если указан конкретный проект и есть данные по проектам
+                        if project != 'all' and 'by_project_issue_keys' in closed_tasks_data:
+                            # Проверяем существование проекта в данных
+                            if project in closed_tasks_data.get('by_project_issue_keys', {}):
+                                issue_keys = closed_tasks_data.get('by_project_issue_keys', {}).get(project, [])
+                                logger.info(f"Found {len(issue_keys)} closed task keys for project {project}")
+                            else:
+                                # Проект не найден в данных
+                                logger.warning(f"Project {project} not found in closed tasks data")
+                                issue_keys = []
+                        else:
+                            # Возвращаем все ключи
+                            issue_keys = closed_tasks_data.get('issue_keys', [])
+                            logger.info(f"Found {len(issue_keys)} total closed task keys")
+
+                        return issue_keys
+                except Exception as e:
+                    logger.error(f"Error reading closed tasks metrics: {e}", exc_info=True)
+                    # Если ошибка, продолжаем стандартный путь
+
+            # Если это не закрытые задачи или файл метрик не найден, используем стандартный путь
             if not os.path.exists(clm_keys_path):
                 logger.error(f"CLM issue keys file not found: {clm_keys_path}")
                 return []
@@ -217,8 +258,12 @@ def register_api_routes(app):
 
                 logger.info(f"Available key types in CLM data: {list(clm_data.keys())}")
 
+                # Проверим, есть ли специальный ключ для закрытых задач
+                if chart_type == 'closed_tasks' and 'closed_tasks_issue_keys' in clm_data:
+                    keys = clm_data.get('closed_tasks_issue_keys', [])
+                    logger.info(f"Found {len(keys)} closed tasks issue keys in CLM data")
                 # Get keys based on chart type
-                if chart_type == 'clm_issues':
+                elif chart_type == 'clm_issues':
                     keys = clm_data.get('clm_issue_keys', [])
                 elif chart_type == 'est_issues':
                     keys = clm_data.get('est_issue_keys', [])
@@ -242,7 +287,7 @@ def register_api_routes(app):
                     keys = clm_data.get('filtered_issue_keys', [])
 
                 # If we need to filter by project and we're not already using project mapping
-                if project != 'all' and chart_type != 'project_issues' and 'project_issue_mapping' in clm_data:
+                if project != 'all' and chart_type != 'project_issues' and chart_type != 'closed_tasks' and 'project_issue_mapping' in clm_data:
                     # Get all issues for this project
                     project_issues = clm_data.get('project_issue_mapping', {}).get(project, [])
                     # Filter the keys to only those in this project
@@ -377,9 +422,9 @@ def register_api_routes(app):
         ignore_period = request.args.get('ignore_period', 'false').lower() == 'true'
         count_based = request.args.get('count_based', 'false').lower() == 'true'
 
-        # Log the received parameters including count_based parameter
+        # Подробное логирование параметров
         logger.info(f"special_jql called: project={project}, chart_type={chart_type}, is_clm={is_clm}, " +
-                    f"ignore_period={ignore_period}, count_based={count_based}, date_from={date_from}, date_to={date_to}")
+                    f"ignore_period={ignore_period}, count_based={count_based}, date_from={date_from}, date_to={date_to}, timestamp={timestamp}")
 
         # Check if it's a dashboard timestamp
         is_dashboard = timestamp and len(timestamp) == 8 and timestamp.isdigit()
@@ -396,6 +441,60 @@ def register_api_routes(app):
         clm_summary_chart_types = ['clm_issues', 'est_issues', 'improvement_issues', 'linked_issues', 'filtered_issues']
 
         if is_clm and timestamp:
+            # Специальная обработка для закрытых задач
+            if chart_type == 'closed_tasks':
+                logger.info(f"Processing closed tasks JQL with timestamp={timestamp}, project={project}")
+                # Получаем ключи задач из сохраненных данных
+                issue_keys = get_issue_keys_for_clm_chart(timestamp, project, chart_type)
+
+                if issue_keys:
+                    logger.info(f"Found {len(issue_keys)} closed task keys")
+                    # Для дополнительной проверки, выведем несколько ключей для отладки
+                    sample_keys = issue_keys[:5] if len(issue_keys) > 5 else issue_keys
+                    logger.info(f"Sample keys: {sample_keys}")
+
+                    # Проверим, что ключи принадлежат запрошенному проекту
+                    valid_keys = []
+                    for key in issue_keys:
+                        # Проверка на соответствие формату PROJECT-NUMBER
+                        parts = key.split('-', 1)
+                        if len(parts) == 2 and parts[0]:
+                            # Если запрошен конкретный проект, фильтруем по нему
+                            if project != 'all' and parts[0] != project:
+                                logger.warning(f"Key {key} does not belong to project {project}, belongs to {parts[0]}")
+                            else:
+                                valid_keys.append(key)
+
+                    # Если нашли валидные ключи
+                    if valid_keys:
+                        logger.info(f"Using {len(valid_keys)} valid keys for project {project}")
+                        issue_keys = valid_keys
+                    else:
+                        logger.warning(f"No valid keys found for project {project}")
+                        # Вернемся к fallback JQL
+                        issue_keys = []
+                else:
+                    # Fallback запрос при отсутствии ключей
+                    closed_statuses = "status in (Closed, Done, Resolved, \"Выполнено\")"
+                    no_comments = "comment is EMPTY"
+                    no_attachments = "attachments is EMPTY"
+                    no_links = "issueFunction not in linkedIssuesOf(\"project is not EMPTY\")"
+
+                    if project and project != 'all':
+                        jql = f'project = {project} AND {closed_statuses} AND {no_comments} AND {no_attachments} AND {no_links}'
+                    else:
+                        jql = f'{closed_statuses} AND {no_comments} AND {no_attachments} AND {no_links}'
+
+                    logger.info(f"No issue keys found for closed tasks, using fallback JQL: {jql}")
+
+                    # Создаем URL для Jira
+                    jira_url = "https://jira.nexign.com/issues/?jql=" + jql.replace(" ", "%20")
+
+                    return jsonify({
+                        'url': jira_url,
+                        'jql': jql
+                    })
+
             # Get issue keys for this chart type from saved data
             issue_keys = get_issue_keys_for_clm_chart(timestamp, project, chart_type)
 

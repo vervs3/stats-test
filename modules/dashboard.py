@@ -126,30 +126,37 @@ def collect_daily_data():
                 # Store issue keys for open tasks
                 open_tasks_issue_keys = open_tasks['issue_key'].tolist()
 
-        # Calculate closed tasks without comments, attachments, and links
-        closed_tasks_data = {}
-        if df is not None and not df.empty:
-            # Get status categories
-            status_categories = get_status_categories(df)
-            closed_statuses = status_categories['closed_statuses']
-
-            # Filter for closed tasks without comments, attachments, and links
-            closed_tasks = df[df['status'].isin(closed_statuses) &
-                              (~df['has_comments']) &
-                              (~df['has_attachments']) &
-                              (~df['has_links'])]
-
-            if not closed_tasks.empty:
-                # Group by project
-                closed_tasks_by_project = closed_tasks.groupby('project').size().to_dict()
-                closed_tasks_data = closed_tasks_by_project
-
-                # Store issue keys for closed tasks
-                closed_tasks_issue_keys = closed_tasks['issue_key'].tolist()
-            else:
+                # Calculate closed tasks without comments, attachments, and links
+                closed_tasks_data = {}
                 closed_tasks_issue_keys = []
-        else:
-            closed_tasks_issue_keys = []
+                if df is not None and not df.empty:
+                    # Get status categories
+                    status_categories = get_status_categories(df)
+                    closed_statuses = status_categories['closed_statuses']
+
+                    # Filter for closed tasks without comments, attachments, and links
+                    closed_tasks = df[df['status'].isin(closed_statuses) &
+                                      (~df['has_comments']) &
+                                      (~df['has_attachments']) &
+                                      (~df['has_links'])]
+
+                    if not closed_tasks.empty:
+                        # Group by project
+                        closed_tasks_by_project = closed_tasks.groupby('project').size().to_dict()
+                        closed_tasks_data = closed_tasks_by_project
+                        logger.info(f"Found {len(closed_tasks)} closed tasks without comments, attachments, and links")
+                        logger.info(f"Closed tasks by project: {closed_tasks_data}")
+
+                        # Store issue keys for closed tasks
+                        closed_tasks_issue_keys = closed_tasks['issue_key'].tolist()
+                        logger.info(
+                            f"Sample closed task keys: {closed_tasks_issue_keys[:5] if len(closed_tasks_issue_keys) > 5 else closed_tasks_issue_keys}")
+                    else:
+                        logger.info("No closed tasks without comments, attachments, and links found")
+                        closed_tasks_issue_keys = []
+                else:
+                    logger.warning("DataFrame is empty, no closed tasks data will be collected")
+                    closed_tasks_issue_keys = []
 
         # Get today's date string for file naming
         date_str = datetime.now().strftime('%Y%m%d')
@@ -188,16 +195,15 @@ def collect_daily_data():
             json.dump(raw_data, f, indent=2, ensure_ascii=False)
         logger.info(f"Saved raw issues data to {raw_issues_path}")
 
-        # Also save issue keys to data directory for JQL generation
+        # Save keys data
         keys_data = {
             'clm_issue_keys': [issue.get('key') for issue in clm_issues if issue.get('key')],
             'est_issue_keys': [issue.get('key') for issue in est_issues if issue.get('key')],
             'improvement_issue_keys': [issue.get('key') for issue in improvement_issues if issue.get('key')],
             'implementation_issue_keys': [issue.get('key') for issue in implementation_issues if issue.get('key')],
             'filtered_issue_keys': [issue.get('key') for issue in implementation_issues if issue.get('key')],
-            # Same as implementation
             'open_tasks_issue_keys': open_tasks_issue_keys,
-            'closed_tasks_issue_keys': closed_tasks_issue_keys
+            'closed_tasks_issue_keys': closed_tasks_issue_keys  # Явно сохраняем ключи закрытых задач
         }
 
         # Group issue keys by project for JQL generation
@@ -227,14 +233,14 @@ def collect_daily_data():
             'days_passed': days_passed,
             'total_working_days': total_working_days,
             'open_tasks_data': open_tasks_data,
-            'closed_tasks_data': closed_tasks_data,
+            'closed_tasks_data': closed_tasks_data,  # Явно сохраняем данные по закрытым задачам
             'clm_issues_count': len(clm_issues),
             'est_issues_count': len(est_issues),
             'improvement_issues_count': len(improvement_issues),
             'implementation_issues_count': len(implementation_issues),
             'clm_time_spent_hours': float(clm_time_spent_hours),
             'implementation_time_spent_hours': float(implementation_time_spent_hours),
-            'refresh_interval': DASHBOARD_REFRESH_INTERVAL  # Include the refresh interval
+            'refresh_interval': DASHBOARD_REFRESH_INTERVAL
         }
 
         # Save the data
@@ -345,18 +351,21 @@ def get_dashboard_data():
             'projected_time_spent': [data.get('projected_time_spent_days', 0) for data in all_data]
         }
 
-        # Get latest open tasks data - handle missing keys safely
+        # Get latest open tasks data
         open_tasks_data = {}
         if latest_data:
             open_tasks_data = latest_data.get('open_tasks_data', {})
 
-        # Get closed tasks data - handle missing keys safely
+        # Get closed tasks data - improved logging and handling
         closed_tasks_data = {}
         if latest_data:
             closed_tasks_data = latest_data.get('closed_tasks_data', {})
-            # Если ключ отсутствует или пустой, логируем это для отладки
+            # Более подробное логирование для отладки
             if not closed_tasks_data:
                 logger.warning(f"No closed_tasks_data found in latest data for timestamp {latest_date}")
+                # Пытаемся найти closed_tasks_data в метриках или других местах
+                if 'closed_tasks_no_links_count' in latest_data:
+                    logger.info(f"Found closed_tasks_no_links_count: {latest_data['closed_tasks_no_links_count']}")
 
         # Get refresh interval from latest data or use the default
         refresh_interval = latest_data.get('refresh_interval',

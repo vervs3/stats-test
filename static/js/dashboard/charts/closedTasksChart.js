@@ -1,3 +1,6 @@
+// Файл: static/js/dashboard/charts/closedTasksChart.js
+// Обновляем функцию initClosedTasksChart и updateClosedTasksChart
+
 // charts/closedTasksChart.js - Closed tasks chart functionality
 import { createColorSet } from '../utils.js';
 import { createClosedTasksJQL } from '../api.js';
@@ -8,6 +11,8 @@ import { createClosedTasksJQL } from '../api.js';
  * @param {string} timestampStr - Timestamp string
  */
 function initClosedTasksChart(closedTasksData, timestampStr) {
+    console.log('Initializing closed tasks chart with data:', closedTasksData);
+
     // Update or create the chart
     updateClosedTasksChart(closedTasksData, timestampStr);
 }
@@ -20,8 +25,8 @@ function initClosedTasksChart(closedTasksData, timestampStr) {
 function updateClosedTasksChart(closedTasksData, timestampStr) {
     // Basic validation
     if (!closedTasksData || typeof closedTasksData !== 'object') {
-        console.error("Invalid closed tasks data");
-        return;
+        console.warn("Invalid closed tasks data, using empty object");
+        closedTasksData = {};
     }
 
     // Get canvas element
@@ -45,72 +50,115 @@ function updateClosedTasksChart(closedTasksData, timestampStr) {
         const values = projects.map(p => closedTasksData[p]);
 
         // Create colors for chart
-        const colors = createColorSet(projects.length);
+        const colors = createColorSet(projects.length || 1);
 
         // If no timestamp provided, use the one from the DOM
         if (!timestampStr) {
             timestampStr = document.body.dataset.latestTimestamp || '';
         }
 
-        // Create chart
-        window.closedTasksChart = new Chart(ctx, {
-            type: 'bar',
-            data: {
-                labels: projects,
-                datasets: [{
-                    label: 'Количество задач',
-                    data: values,
-                    backgroundColor: colors.background,
-                    borderColor: colors.border,
-                    borderWidth: 1
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        title: {
-                            display: true,
-                            text: 'Количество задач'
-                        }
+        console.log(`Creating closed tasks chart with ${projects.length} projects, timestamp: ${timestampStr}`);
+
+        // Create chart options with improved tooltips
+        const chartOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Количество задач'
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Проект'
                     },
-                    x: {
-                        title: {
-                            display: true,
-                            text: 'Проект'
-                        },
-                        ticks: {
-                            maxRotation: 45,
-                            minRotation: 45
+                    ticks: {
+                        maxRotation: 45,
+                        minRotation: 45
+                    }
+                }
+            },
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const value = context.parsed.y;
+                            return `Количество задач: ${value}`;
                         }
                     }
                 },
-                plugins: {
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                const value = context.parsed.y;
-                                return `Количество задач: ${value}`;
+                legend: {
+                    position: 'top',
+                    labels: {
+                        boxWidth: 15,
+                        padding: 10
+                    }
+                }
+            },
+            onClick: function(e, elements) {
+                handleClosedTasksChartClick(e, elements, projects, timestampStr);
+            }
+        };
+
+        // If data is empty, show "no data" message
+        if (projects.length === 0) {
+            window.closedTasksChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Нет данных'],
+                    datasets: [{
+                        label: 'Закрытые задачи без комментариев, вложений и связей',
+                        data: [0],
+                        backgroundColor: colors.background,
+                        borderColor: colors.border,
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    ...chartOptions,
+                    plugins: {
+                        ...chartOptions.plugins,
+                        tooltip: {
+                            callbacks: {
+                                label: function() {
+                                    return 'Нет задач';
+                                }
                             }
                         }
-                    },
-                    legend: {
-                        position: 'top',
-                        labels: {
-                            boxWidth: 15,
-                            padding: 10
-                        }
                     }
-                },
-                onClick: function(e, elements) {
-                    handleClosedTasksChartClick(e, elements, projects, timestampStr);
                 }
-            }
-        });
+            });
 
-        console.log("Closed tasks chart created successfully");
+            // Add text annotation for empty chart
+            ctx.font = '16px Arial';
+            ctx.fillStyle = '#666';
+            ctx.textAlign = 'center';
+            ctx.fillText('Нет закрытых задач без комментариев, вложений и связей', canvas.width / 2, canvas.height / 2);
+
+            console.log("Created empty closed tasks chart");
+        } else {
+            // Create chart with real data
+            window.closedTasksChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: projects,
+                    datasets: [{
+                        label: 'Количество задач',
+                        data: values,
+                        backgroundColor: colors.background,
+                        borderColor: colors.border,
+                        borderWidth: 1
+                    }]
+                },
+                options: chartOptions
+            });
+
+            console.log("Closed tasks chart created successfully with data", values);
+        }
     } catch (error) {
         console.error("Error creating closed tasks chart:", error);
     }
@@ -124,8 +172,11 @@ function updateClosedTasksChart(closedTasksData, timestampStr) {
  * @param {string} timestampStr - Timestamp string
  */
 function handleClosedTasksChartClick(event, elements, projects, timestampStr) {
-    // Check if we have clicked elements
-    if (!elements || !elements.length) return;
+    // Check if we have clicked elements and projects
+    if (!elements || !elements.length || !projects || projects.length === 0) {
+        console.log("No valid elements or projects to handle click");
+        return;
+    }
 
     // Get clicked element info
     const clickedIndex = elements[0].index;
