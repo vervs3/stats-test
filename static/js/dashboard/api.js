@@ -250,7 +250,7 @@ function createClosedTasksJQL(project, timestamp) {
 
             // Проверим, содержит ли JQL упоминание проекта
             if (data.jql && !data.jql.includes(project) && !data.jql.includes('issue in')) {
-                console.error(`Warning: Generated JQL does not include project ${project}!`);
+                console.warn(`Warning: Generated JQL does not include project ${project}!`);
 
                 // В крайнем случае, создаем свой запрос
                 const fallbackJql = `project = ${project} AND status in (Closed, Done, Resolved, "Выполнено") AND comment is EMPTY AND attachments is EMPTY AND issueFunction not in linkedIssuesOf("project is not EMPTY")`;
@@ -281,5 +281,6 @@ function createClosedTasksJQL(project, timestamp) {
             });
         });
 }
+
 
 export { fetchDashboardData, triggerDataCollection, createOpenTasksJQL, createClosedTasksJQL, updateSummaryMetrics };

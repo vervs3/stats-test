@@ -7,12 +7,17 @@
         <span>NBSS Dashboard</span>
         <div class="dashboard-controls d-flex align-items-center">
             <div class="me-3 d-flex align-items-center">
-                <span class="me-2"></span>
+                <span class="me-2 update-label">Последнее обновление:</span>
                 <span id="last-refresh-time" class="fw-bold">{{ latest_timestamp or now.strftime('%Y-%m-%d') }}</span>
             </div>
-            <button id="trigger-collection" class="btn btn-outline-primary" title="Запустить сбор данных">
-                <i class="bi bi-cloud-download"></i> Сбор данных
-            </button>
+            <div class="btn-group me-2">
+                <button id="trigger-collection" class="btn btn-outline-primary" title="Запустить сбор данных вручную">
+                    <i class="bi bi-cloud-download"></i> Сбор данных
+                </button>
+                <button id="scheduler-status-btn" class="btn btn-outline-info" title="Статус планировщика">
+                    <i class="bi bi-clock"></i> Планировщик
+                </button>
+            </div>
         </div>
     </div>
 {% endblock %}
@@ -144,6 +149,57 @@
                 </div>
             </div>
         </div>
+
+        <!-- Scheduler Status Modal -->
+        <div class="modal fade" id="schedulerModal" tabindex="-1" aria-labelledby="schedulerModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="schedulerModalLabel">Статус планировщика</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div id="scheduler-loading" class="text-center mb-3">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Загрузка...</span>
+                            </div>
+                            <p>Получение статуса планировщика...</p>
+                        </div>
+                        <div id="scheduler-content" style="display: none;">
+                            <div class="card mb-3">
+                                <div class="card-body">
+                                    <h5 class="card-title">Статус планировщика</h5>
+                                    <p class="card-text">
+                                        <span id="scheduler-status-badge" class="badge bg-secondary">Неизвестно</span>
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="card mb-3">
+                                <div class="card-body">
+                                    <h5 class="card-title">Расписание обновления данных</h5>
+                                    <p class="card-text" id="scheduler-schedule">
+                                        Ежедневно в <span id="scheduler-time">09:00</span>
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="card-title">Интервал автоматического обновления страницы</h5>
+                                    <p class="card-text" id="refresh-interval">
+                                        Каждый <span id="refresh-interval-value">60</span> минут
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" id="stop-scheduler-btn" class="btn btn-danger" style="display: none;">Остановить планировщик</button>
+                        <button type="button" id="start-scheduler-btn" class="btn btn-success" style="display: none;">Запустить планировщик</button>
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 {% endblock %}
 
@@ -162,7 +218,146 @@
                     triggerDataCollection();
                 });
             }
+
+            // Scheduler status button
+            const schedulerStatusBtn = document.getElementById('scheduler-status-btn');
+            if (schedulerStatusBtn) {
+                schedulerStatusBtn.addEventListener('click', function() {
+                    const schedulerModal = new bootstrap.Modal(document.getElementById('schedulerModal'));
+                    schedulerModal.show();
+                    getSchedulerStatus();
+                });
+            }
+
+            // Start scheduler button
+            const startSchedulerBtn = document.getElementById('start-scheduler-btn');
+            if (startSchedulerBtn) {
+                startSchedulerBtn.addEventListener('click', function() {
+                    startScheduler();
+                });
+            }
+
+            // Stop scheduler button
+            const stopSchedulerBtn = document.getElementById('stop-scheduler-btn');
+            if (stopSchedulerBtn) {
+                stopSchedulerBtn.addEventListener('click', function() {
+                    stopScheduler();
+                });
+            }
         });
+
+        // Function to get scheduler status
+        function getSchedulerStatus() {
+            console.log("Getting scheduler status...");
+
+            // Show loading state
+            document.getElementById('scheduler-loading').style.display = 'block';
+            document.getElementById('scheduler-content').style.display = 'none';
+            document.getElementById('start-scheduler-btn').style.display = 'none';
+            document.getElementById('stop-scheduler-btn').style.display = 'none';
+
+            // Fetch status from API
+            fetch('/api/scheduler/status')
+                .then(response => response.json())
+                .then(data => {
+                    console.log("Scheduler status:", data);
+
+                    // Hide loading state
+                    document.getElementById('scheduler-loading').style.display = 'none';
+                    document.getElementById('scheduler-content').style.display = 'block';
+
+                    // Update status badge
+                    const statusBadge = document.getElementById('scheduler-status-badge');
+                    if (data.running) {
+                        statusBadge.textContent = 'Запущен';
+                        statusBadge.className = 'badge bg-success';
+                        document.getElementById('stop-scheduler-btn').style.display = 'block';
+                    } else {
+                        statusBadge.textContent = 'Остановлен';
+                        statusBadge.className = 'badge bg-danger';
+                        document.getElementById('start-scheduler-btn').style.display = 'block';
+                    }
+
+                    // Update schedule time
+                    document.getElementById('scheduler-time').textContent =
+                        `${String(data.update_hour).padStart(2, '0')}:${String(data.update_minute).padStart(2, '0')}`;
+
+                    // Update refresh interval
+                    const intervalMinutes = Math.round(data.refresh_interval / 60);
+                    document.getElementById('refresh-interval-value').textContent = intervalMinutes;
+                })
+                .catch(error => {
+                    console.error("Error getting scheduler status:", error);
+
+                    // Hide loading state
+                    document.getElementById('scheduler-loading').style.display = 'none';
+
+                    // Show error message
+                    document.getElementById('scheduler-content').innerHTML = `
+                        <div class="alert alert-danger">
+                            <h5>Ошибка</h5>
+                            <p>Не удалось получить статус планировщика: ${error.message}</p>
+                        </div>
+                    `;
+                    document.getElementById('scheduler-content').style.display = 'block';
+                });
+        }
+
+        // Function to start scheduler
+        function startScheduler() {
+            console.log("Starting scheduler...");
+
+            // Disable button
+            document.getElementById('start-scheduler-btn').disabled = true;
+
+            // Fetch API
+            fetch('/api/scheduler/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+                .then(response => response.json())
+                .then(data => {
+                    console.log("Start scheduler response:", data);
+
+                    // Refresh status
+                    getSchedulerStatus();
+                })
+                .catch(error => {
+                    console.error("Error starting scheduler:", error);
+                    alert('Ошибка при запуске планировщика: ' + error.message);
+
+                    // Enable button
+                    document.getElementById('start-scheduler-btn').disabled = false;
+                });
+        }
+
+        // Function to stop scheduler
+        function stopScheduler() {
+            console.log("Stopping scheduler...");
+
+            // Disable button
+            document.getElementById('stop-scheduler-btn').disabled = true;
+
+            // Fetch API
+            fetch('/api/scheduler/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+                .then(response => response.json())
+                .then(data => {
+                    console.log("Stop scheduler response:", data);
+
+                    // Refresh status
+                    getSchedulerStatus();
+                })
+                .catch(error => {
+                    console.error("Error stopping scheduler:", error);
+                    alert('Ошибка при остановке планировщика: ' + error.message);
+
+                    // Enable button
+                    document.getElementById('stop-scheduler-btn').disabled = false;
+                });
+        }
 
         // Function to trigger data collection
         function triggerDataCollection() {

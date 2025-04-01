@@ -1,6 +1,3 @@
-// Файл: static/js/dashboard/charts/closedTasksChart.js
-// Обновляем функцию initClosedTasksChart и updateClosedTasksChart
-
 // charts/closedTasksChart.js - Closed tasks chart functionality
 import { createColorSet } from '../utils.js';
 import { createClosedTasksJQL } from '../api.js';
@@ -59,6 +56,10 @@ function updateClosedTasksChart(closedTasksData, timestampStr) {
 
         console.log(`Creating closed tasks chart with ${projects.length} projects, timestamp: ${timestampStr}`);
 
+        // Store projects and timestamp for click handler
+        const storedProjects = [...projects];
+        const storedTimestamp = timestampStr;
+
         // Create chart options with improved tooltips
         const chartOptions = {
             responsive: true,
@@ -100,7 +101,8 @@ function updateClosedTasksChart(closedTasksData, timestampStr) {
                 }
             },
             onClick: function(e, elements) {
-                handleClosedTasksChartClick(e, elements, projects, timestampStr);
+                // Важно: передаем сохраненные проекты и timestamp в обработчик клика
+                handleClosedTasksChartClick(e, elements, storedProjects, storedTimestamp);
             }
         };
 
@@ -180,9 +182,22 @@ function handleClosedTasksChartClick(event, elements, projects, timestampStr) {
 
     // Get clicked element info
     const clickedIndex = elements[0].index;
+
+    // Проверяем, что clickedIndex в пределах массива projects
+    if (clickedIndex < 0 || clickedIndex >= projects.length) {
+        console.error(`Invalid clickedIndex: ${clickedIndex}, projects array length: ${projects.length}`);
+        return;
+    }
+
     const project = projects[clickedIndex];
 
     console.log(`Closed tasks chart clicked: project=${project}, timestamp=${timestampStr}`);
+
+    // Проверяем, что значение проекта не пустое
+    if (!project) {
+        console.error("Project value is empty, cannot create JQL");
+        return;
+    }
 
     // Create JQL query for this project
     createClosedTasksJQL(project, timestampStr);

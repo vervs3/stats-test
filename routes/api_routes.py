@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from datetime import datetime
 from flask import request, jsonify, render_template
 from modules.log_buffer import get_logs
 from modules.data_processor import get_improved_open_statuses
@@ -17,8 +18,116 @@ CHARTS_DIR = 'jira_charts'
 # Directory for dashboard data
 DASHBOARD_DIR = 'nbss_data'
 
+
 def register_api_routes(app):
     """Register API routes"""
+
+    @app.route('/api/dashboard/collect', methods=['POST'])
+    def trigger_dashboard_collection():
+        """
+        Manually trigger dashboard data collection
+        """
+        try:
+            from scheduler import trigger_data_collection
+
+            # Trigger the data collection
+            result = trigger_data_collection()
+
+            return jsonify({
+                'success': True,
+                'message': 'Dashboard data collection has been triggered',
+                'status': result
+            })
+        except Exception as e:
+            logger.error(f"Error triggering dashboard data collection: {e}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+
+    @app.route('/api/scheduler/status')
+    def scheduler_status():
+        """
+        Get the status of the dashboard scheduler
+        """
+        try:
+            from scheduler import is_scheduler_running
+
+            # Get scheduler status
+            running = is_scheduler_running()
+
+            # Import the configuration values
+            try:
+                from config import DASHBOARD_UPDATE_HOUR, DASHBOARD_UPDATE_MINUTE, DASHBOARD_REFRESH_INTERVAL
+            except ImportError:
+                DASHBOARD_UPDATE_HOUR = 9
+                DASHBOARD_UPDATE_MINUTE = 0
+                DASHBOARD_REFRESH_INTERVAL = 3600
+
+            return jsonify({
+                'success': True,
+                'running': running,
+                'update_hour': DASHBOARD_UPDATE_HOUR,
+                'update_minute': DASHBOARD_UPDATE_MINUTE,
+                'refresh_interval': DASHBOARD_REFRESH_INTERVAL
+            })
+        except Exception as e:
+            logger.error(f"Error getting scheduler status: {e}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+
+    @app.route('/api/scheduler/start', methods=['POST'])
+    def start_scheduler():
+        """
+        Start the dashboard scheduler
+        """
+        try:
+            from scheduler import start_scheduler
+
+            # Start the scheduler
+            result = start_scheduler()
+
+            return jsonify({
+                'success': True,
+                'message': 'Dashboard scheduler has been started',
+                'status': result
+            })
+        except Exception as e:
+            logger.error(f"Error starting scheduler: {e}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+
+    @app.route('/api/scheduler/stop', methods=['POST'])
+    def stop_scheduler():
+        """
+        Stop the dashboard scheduler
+        """
+        try:
+            from scheduler import stop_scheduler
+
+            # Stop the scheduler
+            result = stop_scheduler()
+
+            return jsonify({
+                'success': True,
+                'message': 'Dashboard scheduler has been stopped',
+                'status': result
+            })
+        except Exception as e:
+            logger.error(f"Error stopping scheduler: {e}", exc_info=True)
+            return jsonify({
+                'success': False,
+                'error': str(e)
+            }), 500
+
+    @app.before_request
+    def log_request_skip_logs():
+        if request.path == '/logs':
+            return None
 
     @app.route('/api/dashboard/data')
     def api_dashboard_data():
@@ -248,6 +357,31 @@ def register_api_routes(app):
                     logger.error(f"Error reading closed tasks metrics: {e}", exc_info=True)
                     # Если ошибка, продолжаем стандартный путь
 
+            # Если this is clm_issue_keys.json и там есть mapping для closed_tasks_by_project
+            if chart_type == 'closed_tasks' and os.path.exists(clm_keys_path):
+                logger.info("Looking for closed tasks in clm_issue_keys.json")
+                try:
+                    with open(clm_keys_path, 'r', encoding='utf-8') as f:
+                        clm_data = json.load(f)
+
+                        # Сначала проверяем наличие closed_tasks_issue_keys
+                        if 'closed_tasks_issue_keys' in clm_data:
+                            all_keys = clm_data.get('closed_tasks_issue_keys', [])
+                            logger.info(f"Found {len(all_keys)} closed task keys")
+
+                            # Если запрошены задачи для конкретного проекта
+                            if project != 'all' and 'closed_tasks_by_project' in clm_data:
+                                # Получаем только ключи для указанного проекта
+                                project_keys = clm_data.get('closed_tasks_by_project', {}).get(project, [])
+                                logger.info(f"Filtered to {len(project_keys)} closed task keys for project {project}")
+                                return project_keys
+
+                            # Иначе возвращаем все ключи
+                            return all_keys
+                except Exception as e:
+                    logger.error(f"Error reading closed tasks from clm_keys: {e}", exc_info=True)
+                    # Продолжаем обычный путь при ошибке
+
             # Если это не закрытые задачи или файл метрик не найден, используем стандартный путь
             if not os.path.exists(clm_keys_path):
                 logger.error(f"CLM issue keys file not found: {clm_keys_path}")
@@ -447,34 +581,42 @@ def register_api_routes(app):
                 # Получаем ключи задач из сохраненных данных
                 issue_keys = get_issue_keys_for_clm_chart(timestamp, project, chart_type)
 
-                if issue_keys:
+                if issue_keys and len(issue_keys) > 0:
                     logger.info(f"Found {len(issue_keys)} closed task keys")
                     # Для дополнительной проверки, выведем несколько ключей для отладки
                     sample_keys = issue_keys[:5] if len(issue_keys) > 5 else issue_keys
                     logger.info(f"Sample keys: {sample_keys}")
 
-                    # Проверим, что ключи принадлежат запрошенному проекту
-                    valid_keys = []
-                    for key in issue_keys:
-                        # Проверка на соответствие формату PROJECT-NUMBER
-                        parts = key.split('-', 1)
-                        if len(parts) == 2 and parts[0]:
-                            # Если запрошен конкретный проект, фильтруем по нему
-                            if project != 'all' and parts[0] != project:
-                                logger.warning(f"Key {key} does not belong to project {project}, belongs to {parts[0]}")
-                            else:
-                                valid_keys.append(key)
+                    # ENHANCED: Always use issue in (...) format with chunking for large sets
+                    chunk_size = 100  # Jira typically has limits on JQL length
 
-                    # Если нашли валидные ключи
-                    if valid_keys:
-                        logger.info(f"Using {len(valid_keys)} valid keys for project {project}")
-                        issue_keys = valid_keys
+                    if len(issue_keys) > chunk_size:
+                        # For many issues, split into chunks and join with OR
+                        logger.info(f"Chunking {len(issue_keys)} issue keys into groups of {chunk_size}")
+                        chunks = [issue_keys[i:i + chunk_size] for i in range(0, len(issue_keys), chunk_size)]
+
+                        # Create a JQL with multiple "issue in (...)" clauses
+                        jql_parts = [f'issue in ({", ".join(chunk)})' for chunk in chunks]
+                        jql = ' OR '.join(jql_parts)
+
+                        logger.info(f"Created chunked JQL with {len(chunks)} chunks")
                     else:
-                        logger.warning(f"No valid keys found for project {project}")
-                        # Вернемся к fallback JQL
-                        issue_keys = []
+                        # For a reasonable number of issues, use a single clause
+                        jql = f'issue in ({", ".join(issue_keys)})' if issue_keys else ''
+                        logger.info(f"Created single-chunk JQL with {len(issue_keys)} issues")
                 else:
-                    # Fallback запрос при отсутствии ключей
+                    # Если у нас closed_tasks и ключи не нашлись (пустой список)
+                    logger.warning(f"No filtered issue keys found for project {project}, using direct fallback query")
+                    # Создаем явный запрос с проектом
+                    if project != 'all':
+                        jql = f'project = {project} AND status in (Closed, Done, Resolved, "Выполнено") AND comment is EMPTY AND attachments is EMPTY AND issueFunction not in linkedIssuesOf("project is not EMPTY")'
+                    else:
+                        jql = f'status in (Closed, Done, Resolved, "Выполнено") AND comment is EMPTY AND attachments is EMPTY AND issueFunction not in linkedIssuesOf("project is not EMPTY")'
+
+                    logger.info(f"Created direct fallback JQL: {jql}")
+
+                # Если jql всё ещё пустая, создаем резервный запрос
+                if not jql:
                     closed_statuses = "status in (Closed, Done, Resolved, \"Выполнено\")"
                     no_comments = "comment is EMPTY"
                     no_attachments = "attachments is EMPTY"
@@ -485,20 +627,20 @@ def register_api_routes(app):
                     else:
                         jql = f'{closed_statuses} AND {no_comments} AND {no_attachments} AND {no_links}'
 
-                    logger.info(f"No issue keys found for closed tasks, using fallback JQL: {jql}")
+                    logger.info(f"Created fallback JQL for closed tasks: {jql}")
 
-                    # Создаем URL для Jira
-                    jira_url = "https://jira.nexign.com/issues/?jql=" + jql.replace(" ", "%20")
+                # Создаем URL для Jira
+                jira_url = "https://jira.nexign.com/issues/?jql=" + jql.replace(" ", "%20")
 
-                    return jsonify({
-                        'url': jira_url,
-                        'jql': jql
-                    })
+                return jsonify({
+                    'url': jira_url,
+                    'jql': jql
+                })
 
             # Get issue keys for this chart type from saved data
             issue_keys = get_issue_keys_for_clm_chart(timestamp, project, chart_type)
 
-            if issue_keys:
+            if issue_keys and len(issue_keys) > 0:
                 # ENHANCED: Always use issue in (...) format with chunking for large sets
                 chunk_size = 100  # Jira typically has limits on JQL length
 
@@ -544,7 +686,7 @@ def register_api_routes(app):
                         jql = f'project = {project} AND status in (Open, "NEW") AND timespent > 0'
                         logger.info(f"Using time-based open tasks query")
                 elif chart_type == 'closed_tasks':
-                    # Query for closed tasks without comments, attachments, and links
+                    # Query for closed tasks without comments, attachments, links and merge request mentions
                     if count_based:
                         # Modified query to focus on finding closed tasks without comments, attachments, and links
                         closed_statuses = "status in (Closed, Done, Resolved, \"Выполнено\")"
@@ -552,8 +694,12 @@ def register_api_routes(app):
                         no_attachments = "attachments is EMPTY"
                         no_links = "issueFunction not in linkedIssuesOf(\"project is not EMPTY\")"
 
-                        jql = f'project = {project} AND {closed_statuses} AND {no_comments} AND {no_attachments} AND {no_links}'
-                        logger.info(f"Using query for closed tasks without comments, attachments, and links")
+                        # Add condition to exclude merge request mentions in summary and description
+                        no_merge_requests = "(summary !~ \"merge request\" AND summary !~ \"SSO-\" AND description !~ \"merge request\" AND description !~ \"SSO-\")"
+
+                        jql = f'project = {project} AND {closed_statuses} AND {no_comments} AND {no_attachments} AND {no_links} AND {no_merge_requests}'
+                        logger.info(
+                            f"Using query for closed tasks without comments, attachments, links, and merge request mentions")
                     else:
                         # Fallback to basic closed status query
                         jql = f'project = {project} AND status in (Closed, Done, Resolved, \"Выполнено\")'
@@ -646,6 +792,12 @@ def register_api_routes(app):
                 final_jql = ' AND '.join(conditions) if conditions else ''
 
             jql = final_jql
+
+        # Добавляем явную проверку для проекта
+        if project and project != 'all' and not jql.lower().startswith('issue in') and not jql.lower().startswith(
+                'project ='):
+            jql = f"project = {project} AND ({jql})" if jql else f"project = {project}"
+            logger.info(f"Added explicit project filter for {project}: {jql}")
 
         # Log the final JQL query
         logger.info(
@@ -933,25 +1085,3 @@ def register_api_routes(app):
                 'error': str(e)
             }), 500
 
-    @app.route('/api/dashboard/collect', methods=['POST'])
-    def trigger_dashboard_collection():
-        """
-        Manually trigger dashboard data collection
-        """
-        try:
-            from scheduler import trigger_data_collection
-
-            # Trigger the data collection
-            result = trigger_data_collection()
-
-            return jsonify({
-                'success': True,
-                'message': 'Dashboard data collection has been triggered',
-                'status': result
-            })
-        except Exception as e:
-            logger.error(f"Error triggering dashboard data collection: {e}", exc_info=True)
-            return jsonify({
-                'success': False,
-                'error': str(e)
-            }), 500

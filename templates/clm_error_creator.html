@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+
+{% block title %}CLM Error Creator{% endblock %}
+
+{% block head %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/clm_error_creator.css') }}">
+{% endblock %}
+
+{% block header %}CLM Error Creator{% endblock %}
+
+{% block content %}
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Создание CLM Error из существующих задач</h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <p>Эта функция создает задачи типа CLM Error на основе существующих задач Jira.</p>
+                        <p><strong>Обязательные поля:</strong></p>
+                        <ul>
+                            <li>Project: CLM (CLM)</li>
+                            <li>Issue Type: Error</li>
+                            <li>Summary: импортируется из Summary оригинального JIRA issue</li>
+                            <li>Description: импортируется из Description оригинального JIRA issue</li>
+                            <li>Product Group: DIGITAL_BSS</li>
+                            <li>Subsystem: определяется на основе компонента исходной задачи</li>
+                            <li>Urgency: B - High</li>
+                            <li>Company: investment</li>
+                            <li>Production/Test: DEVELOPMENT</li>
+                        </ul>
+                    </div>
+
+                    <form id="clm-error-form" class="mt-3">
+                        <div class="mb-3">
+                            <label for="issue-keys" class="form-label">Ключи задач Jira (через запятую)</label>
+                            <input type="text" class="form-control" id="issue-keys" name="issue_keys"
+                                   placeholder="Например: NBSS-1234, UDB-567" required>
+                            <div class="form-text">Введите один или несколько ключей задач, разделенных запятыми.</div>
+                        </div>
+
+                        <button type="submit" class="btn btn-primary" id="create-button">
+                            <span id="create-spinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                            Создать CLM Error
+                        </button>
+                    </form>
+
+                    <div id="results-container" class="mt-4 d-none">
+                        <h4>Результаты создания CLM Error</h4>
+                        <div class="table-responsive">
+                            <table class="table table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Исходная задача</th>
+                                        <th>CLM Error</th>
+                                        <th>Статус</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="results-table">
+                                    <!-- Результаты будут добавлены сюда -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Настройка соответствия компонентов и подсистем</h3>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info">
+                        <p>Соответствие между компонентами задач и подсистемами CLM определяется на основе совпадения первых 3 символов.</p>
+                        <p>Вы можете загрузить собственный файл соответствия для изменения этого маппинга.</p>
+                    </div>
+
+                    <form id="upload-mapping-form" class="mb-4">
+                        <div class="mb-3">
+                            <label for="mapping-file" class="form-label">Загрузить файл соответствия (.xlsx)</label>
+                            <input type="file" class="form-control" id="mapping-file" name="mapping_file" accept=".xlsx,.xls">
+                            <div class="form-text">Файл должен содержать колонки ProdCode и SubCode.</div>
+                        </div>
+
+                        <button type="submit" class="btn btn-secondary" id="upload-button">
+                            <span id="upload-spinner" class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                            Загрузить файл
+                        </button>
+                    </form>
+
+                    <div class="mt-4">
+                        <h5>Доступные подсистемы для DIGITAL_BSS</h5>
+                        {% if subsystems %}
+                            <div class="row">
+                                {% for subsystem in subsystems %}
+                                    <div class="col-md-4 mb-2">
+                                        <span class="badge bg-info">{{ subsystem }}</span>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                        {% else %}
+                            <div class="alert alert-warning">
+                                <p>Подсистемы не найдены. Загрузите файл соответствия.</p>
+                            </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for error messages -->
+    <div class="modal fade" id="errorModal" tabindex="-1" aria-labelledby="errorModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="errorModalLabel">Ошибка</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="error-message">
+                    <!-- Error message will be inserted here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+// Form for creating CLM Errors
+const clmErrorForm = document.getElementById('clm-error-form');
+const createButton = document.getElementById('create-button');
+const createSpinner = document.getElementById('create-spinner');
+const resultsContainer = document.getElementById('results-container');
+const resultsTable = document.getElementById('results-table');
+
+// Form for uploading mapping file
+const uploadMappingForm = document.getElementById('upload-mapping-form');
+const uploadButton = document.getElementById('upload-button');
+const uploadSpinner = document.getElementById('upload-spinner');
+
+// Error modal
+const errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
+const errorMessage = document.getElementById('error-message');
+
+// Handle CLM Error form submission
+clmErrorForm.addEventListener('submit', function(e) {
+e.preventDefault();
+
+// Show spinner and disable button
+createSpinner.classList.remove('d-none');
+createButton.disabled = true;
+
+// Get form data
+const formData = new FormData();
+formData.append('issue_keys', document.getElementById('issue-keys').value);
+
+// Send request
+fetch('/api/create-clm-errors', {
+method: 'POST',
+body: formData
+})
+.then(response => response.json())
+.then(data => {
+if (data.success) {
+// Show results container
+resultsContainer.classList.remove('d-none');
+
+// Clear previous results
+resultsTable.innerHTML = '';
+
+// Add results to table
+const results = data.results;
+for (const [issueKey, clmErrorKey] of Object.entries(results)) {
+const row = document.createElement('tr');
+
+// Original issue key
+const issueCell = document.createElement('td');
+const issueLink = document.createElement('a');
+issueLink.href = `https://jira.nexign.com/browse/${issueKey}`;
+issueLink.target = '_blank';
+issueLink.textContent = issueKey;
+issueCell.appendChild(issueLink);
+row.appendChild(issueCell);
+
+// CLM Error key
+const clmErrorCell = document.createElement('td');
+if (clmErrorKey) {
+const clmErrorLink = document.createElement('a');
+clmErrorLink.href = `https://jira.nexign.com/browse/${clmErrorKey}`;
+clmErrorLink.target = '_blank';
+clmErrorLink.textContent = clmErrorKey;
+clmErrorCell.appendChild(clmErrorLink);
+} else {
+clmErrorCell.textContent = 'Не создан';
+}
+row.appendChild(clmErrorCell);
+
+// Status
+const statusCell = document.createElement('td');
+if (clmErrorKey) {
+statusCell.innerHTML = '<span class="badge bg-success">Успешно</span>';
+} else {
+statusCell.innerHTML = '<span class="badge bg-danger">Ошибка</span>';
+}
+row.appendChild(statusCell);
+
+resultsTable.appendChild(row);
+}
+} else {
+// Show error modal
+errorMessage.textContent = data.error || 'Произошла ошибка при создании CLM Error';
+errorModal.show();
+}
+})
+.catch(error => {
+console.error('Error:', error);
+errorMessage.textContent = 'Произошла ошибка при отправке запроса';
+errorModal.show();
+})
+.finally(() => {
+// Hide spinner and enable button
+createSpinner.classList.add('d-none');
+createButton.disabled = false;
+});
+});
+
+// Handle mapping file upload
+uploadMappingForm.addEventListener('submit', function(e) {
+e.preventDefault();
+
+// Get file
+const file = document.getElementById('mapping-file').files[0];
+if (!file) {
+errorMessage.textContent = 'Выберите файл для загрузки';
+errorModal.show();
+return;
+}
+
+// Show spinner and disable button
+uploadSpinner.classList.remove('d-none');
+uploadButton.disabled = true;
+
+// Create form data
+const formData = new FormData();
+formData.append('mapping_file', file);
+
+// Send request
+fetch('/api/upload-subsystem-mapping', {
+method: 'POST',
+body: formData
+})
+.then(response => response.json())
+.then(data => {
+if (data.success) {
+// Reload page to show updated subsystems
+window.location.reload();
+} else {
+// Show error modal
+errorMessage.textContent = data.error || 'Произошла ошибка при загрузке файла';
+errorModal.show();
+}
+})
+.catch(error => {
+console.error('Error:', error);
+errorMessage.textContent = 'Произошла ошибка при отправке запроса';
+errorModal.show();
+})
+.finally(() => {
+// Hide spinner and enable button
+uploadSpinner.classList.add('d-none');
+uploadButton.disabled = false;
+});
+</script>
+{% endblock %}

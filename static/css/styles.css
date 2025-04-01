@@ -376,3 +376,8 @@
     pointer-events: none;
     z-index: 1000;
 }
+
+.update-label {
+    font-size: 0.75rem; /* еще меньший размер шрифта */
+    color: #999; /* более светлый серый цвет */
+}

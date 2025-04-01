@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+import re
 
 import logger
 import pandas as pd
@@ -27,6 +28,55 @@ DASHBOARD_DIR = 'nbss_data'
 # Ensure the directory exists
 if not os.path.exists(DASHBOARD_DIR):
     os.makedirs(DASHBOARD_DIR)
+
+
+def has_merge_request_mentions(issue):
+    """
+    Проверяет, содержит ли задача упоминания merge requests
+
+    Args:
+        issue (dict): Словарь с данными задачи из Jira API
+
+    Returns:
+        bool: True если есть упоминания merge requests, иначе False
+    """
+    # Проверяем комментарии
+    comments = issue.get('fields', {}).get('comment', {}).get('comments', [])
+    for comment in comments:
+        comment_text = comment.get('body', '')
+        # Ищем упоминания merge requests по паттерну
+        if re.search(r'merge\s+request', comment_text, re.IGNORECASE) or 'SSO-' in comment_text:
+            return True
+
+    # Проверяем описание задачи
+    description = issue.get('fields', {}).get('description', '') or ''
+    if re.search(r'merge\s+request', description, re.IGNORECASE) or 'SSO-' in description:
+        return True
+
+    # Проверяем summary
+    summary = issue.get('fields', {}).get('summary', '') or ''
+    if re.search(r'merge\s+request', summary, re.IGNORECASE) or 'SSO-' in summary:
+        return True
+
+    # Проверяем наличие issue links типа "mentioned on" с MR
+    issue_links = issue.get('fields', {}).get('issuelinks', [])
+    for link in issue_links:
+        # Проверяем тип связи
+        link_type_name = link.get('type', {}).get('name', '').lower()
+
+        # Ищем связь "mentioned on"
+        if link_type_name == 'mentioned on' or 'mention' in link_type_name:
+            # Проверяем ключ связанной задачи - часто MR имеют формат "SSO-XXXXX"
+            related_key = None
+            if 'inwardIssue' in link:
+                related_key = link.get('inwardIssue', {}).get('key', '')
+            elif 'outwardIssue' in link:
+                related_key = link.get('outwardIssue', {}).get('key', '')
+
+            if related_key and 'SSO-' in related_key:
+                return True
+
+    return False
 
 
 def collect_daily_data():
@@ -113,6 +163,11 @@ def collect_daily_data():
         # Calculate open tasks data
         open_tasks_data = {}
         open_tasks_issue_keys = []
+
+        # Calculate closed tasks data
+        closed_tasks_data = {}
+        closed_tasks_issue_keys = []
+
         if df is not None and not df.empty:
             # Filter for open tasks with time spent
             open_statuses = get_improved_open_statuses(df)
@@ -126,37 +181,67 @@ def collect_daily_data():
                 # Store issue keys for open tasks
                 open_tasks_issue_keys = open_tasks['issue_key'].tolist()
 
-                # Calculate closed tasks without comments, attachments, and links
-                closed_tasks_data = {}
-                closed_tasks_issue_keys = []
-                if df is not None and not df.empty:
-                    # Get status categories
-                    status_categories = get_status_categories(df)
-                    closed_statuses = status_categories['closed_statuses']
+            # Calculate closed tasks without comments, attachments, and links
+            # Get status categories
+            status_categories = get_status_categories(df)
+            closed_statuses = status_categories['closed_statuses']
 
-                    # Filter for closed tasks without comments, attachments, and links
-                    closed_tasks = df[df['status'].isin(closed_statuses) &
-                                      (~df['has_comments']) &
-                                      (~df['has_attachments']) &
-                                      (~df['has_links'])]
+            # Предварительная фильтрация
+            pre_filtered_tasks = df[df['status'].isin(closed_statuses) &
+                                    (~df['has_comments']) &
+                                    (~df['has_attachments']) &
+                                    (~df['has_links'])]
 
-                    if not closed_tasks.empty:
-                        # Group by project
-                        closed_tasks_by_project = closed_tasks.groupby('project').size().to_dict()
-                        closed_tasks_data = closed_tasks_by_project
-                        logger.info(f"Found {len(closed_tasks)} closed tasks without comments, attachments, and links")
-                        logger.info(f"Closed tasks by project: {closed_tasks_data}")
+            logger.info(f"Pre-filtered {len(pre_filtered_tasks)} closed tasks without comments, attachments, and links")
 
-                        # Store issue keys for closed tasks
-                        closed_tasks_issue_keys = closed_tasks['issue_key'].tolist()
-                        logger.info(
-                            f"Sample closed task keys: {closed_tasks_issue_keys[:5] if len(closed_tasks_issue_keys) > 5 else closed_tasks_issue_keys}")
+            # Дополнительная фильтрация на упоминания merge requests
+            closed_tasks_final = []
+            merge_request_mentions_count = 0
+
+            # Получаем raw issues для проверки упоминаний merge requests
+            # Создаем mapping из ключей задач в raw issues
+            issue_mapping = {issue.get('key'): issue for issue in implementation_issues if issue.get('key')}
+
+            for _, row in pre_filtered_tasks.iterrows():
+                issue_key = row['issue_key']
+                raw_issue = issue_mapping.get(issue_key)
+
+                if raw_issue:
+                    if not has_merge_request_mentions(raw_issue):
+                        closed_tasks_final.append(row)
                     else:
-                        logger.info("No closed tasks without comments, attachments, and links found")
-                        closed_tasks_issue_keys = []
+                        merge_request_mentions_count += 1
                 else:
-                    logger.warning("DataFrame is empty, no closed tasks data will be collected")
-                    closed_tasks_issue_keys = []
+                    # Если не нашли raw issue, считаем что она всё равно подходит
+                    closed_tasks_final.append(row)
+                    logger.warning(f"Could not find raw issue for {issue_key} for merge request check")
+
+            logger.info(f"Filtered out {merge_request_mentions_count} issues with merge request mentions")
+
+            # Конвертируем список обратно в DataFrame
+            if closed_tasks_final:
+                closed_tasks = pd.DataFrame(closed_tasks_final)
+            else:
+                closed_tasks = pd.DataFrame(columns=pre_filtered_tasks.columns)
+
+            if not closed_tasks.empty:
+                # Group by project
+                closed_tasks_by_project = closed_tasks.groupby('project').size().to_dict()
+                closed_tasks_data = closed_tasks_by_project
+
+                logger.info(
+                    f"Found {len(closed_tasks)} closed tasks without comments, attachments, links, and merge request mentions")
+                logger.info(f"Closed tasks by project: {closed_tasks_data}")
+
+                # Store issue keys for closed tasks
+                closed_tasks_issue_keys = closed_tasks['issue_key'].tolist()
+
+                # Log some sample keys for diagnostic purposes
+                sample_keys = closed_tasks_issue_keys[:5] if len(
+                    closed_tasks_issue_keys) > 5 else closed_tasks_issue_keys
+                logger.info(f"Sample closed task keys: {sample_keys}")
+            else:
+                logger.info("No closed tasks without comments, attachments, links, and merge request mentions found")
 
         # Get today's date string for file naming
         date_str = datetime.now().strftime('%Y%m%d')
@@ -164,11 +249,14 @@ def collect_daily_data():
         # Create directories for today's data
         daily_dir = os.path.join(DASHBOARD_DIR, date_str)
         data_dir = os.path.join(daily_dir, 'data')
+        metrics_dir = os.path.join(daily_dir, 'metrics')
 
         if not os.path.exists(daily_dir):
             os.makedirs(daily_dir)
         if not os.path.exists(data_dir):
             os.makedirs(data_dir)
+        if not os.path.exists(metrics_dir):
+            os.makedirs(metrics_dir)
 
         # Save raw issues in a similar format to CLM analyzer
         # Modified: Using the same structure as Jira analyzer (filtered_issues and all_implementation_issues)
@@ -218,10 +306,37 @@ def collect_daily_data():
 
         keys_data['project_issue_mapping'] = project_issue_mapping
 
+        # Group closed tasks by project for easier access in JQL generation
+        closed_tasks_by_project = {}
+        if not closed_tasks.empty:
+            # Group by project
+            for project in closed_tasks['project'].unique():
+                project_tasks = closed_tasks[closed_tasks['project'] == project]
+                closed_tasks_by_project[project] = project_tasks['issue_key'].tolist()
+
+            logger.info(f"Mapped {len(closed_tasks_by_project)} projects with closed tasks")
+
+        # Save the closed tasks by project mapping
+        keys_data['closed_tasks_by_project'] = closed_tasks_by_project
+
         clm_keys_path = os.path.join(data_dir, 'clm_issue_keys.json')
         with open(clm_keys_path, 'w', encoding='utf-8') as f:
             json.dump(keys_data, f, indent=4, ensure_ascii=False)
         logger.info(f"Saved CLM issue keys to {clm_keys_path}")
+
+        # Save additional details about closed tasks to a separate metrics file for easier access
+        if closed_tasks_issue_keys:
+            closed_tasks_metrics = {
+                'count': len(closed_tasks_issue_keys),
+                'by_project': closed_tasks_data,
+                'issue_keys': closed_tasks_issue_keys,
+                'by_project_issue_keys': closed_tasks_by_project
+            }
+
+            closed_tasks_metrics_path = os.path.join(metrics_dir, 'closed_tasks_no_links.json')
+            with open(closed_tasks_metrics_path, 'w', encoding='utf-8') as f:
+                json.dump(closed_tasks_metrics, f, indent=4, ensure_ascii=False)
+            logger.info(f"Saved detailed closed tasks metrics to {closed_tasks_metrics_path}")
 
         # Create data to save
         dashboard_data = {
@@ -366,6 +481,19 @@ def get_dashboard_data():
                 # Пытаемся найти closed_tasks_data в метриках или других местах
                 if 'closed_tasks_no_links_count' in latest_data:
                     logger.info(f"Found closed_tasks_no_links_count: {latest_data['closed_tasks_no_links_count']}")
+
+                # Проверяем файл метрик если не нашли closed_tasks_data в summary
+                metrics_path = os.path.join(latest_folder_path, 'metrics', 'closed_tasks_no_links.json')
+                if os.path.exists(metrics_path):
+                    try:
+                        with open(metrics_path, 'r', encoding='utf-8') as f:
+                            metrics_data = json.load(f)
+                            if 'by_project' in metrics_data:
+                                closed_tasks_data = metrics_data['by_project']
+                                logger.info(
+                                    f"Found closed tasks data in metrics file: {len(closed_tasks_data)} projects")
+                    except Exception as e:
+                        logger.error(f"Error reading closed tasks metrics: {e}")
 
         # Get refresh interval from latest data or use the default
         refresh_interval = latest_data.get('refresh_interval',

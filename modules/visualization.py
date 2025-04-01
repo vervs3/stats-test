@@ -11,10 +11,16 @@ from datetime import datetime
 from modules.data_processor import get_improved_open_statuses, get_status_categories, logger
 
 
-def create_visualizations(df, output_dir='jira_charts', logger=None):
+def create_visualizations(df, output_dir='jira_charts', logger=None, implementation_issues=None):
     """
     Create visualizations from processed data.
-    Added chart for closed tasks without comments, attachments, and links.
+    Added chart for closed tasks without comments, attachments, links and merge request mentions.
+
+    Args:
+        df (pandas.DataFrame): Processed DataFrame with issue data
+        output_dir (str): Directory to save visualizations
+        logger (logging.Logger): Logger instance
+        implementation_issues (list): Raw issue data for detecting merge request mentions
     """
     # Set default logger if none provided
     if logger is None:
@@ -43,8 +49,8 @@ def create_visualizations(df, output_dir='jira_charts', logger=None):
     chart_paths.update(create_no_transitions_chart(df, output_dir, logger))
     chart_paths.update(create_open_tasks_chart(df, output_dir, logger))
     chart_paths.update(create_closed_tasks_chart(df, output_dir, logger))
-    # Add the new chart
-    chart_paths.update(create_closed_tasks_without_links_chart(df, output_dir, logger))
+    # Add the new chart with implementation_issues parameter
+    chart_paths.update(create_closed_tasks_without_links_chart(df, output_dir, logger, implementation_issues))
 
     # Generate summary statistics
     summary = {
@@ -458,9 +464,9 @@ def create_closed_tasks_chart(df, output_dir, logger):
     return chart_paths
 
 
-def create_closed_tasks_without_links_chart(df, output_dir, logger):
-    """Create chart for closed tasks without comments, attachments, and links"""
-    logger.info("GENERATING CLOSED TASKS WITHOUT COMMENTS, ATTACHMENTS, AND LINKS CHART")
+def create_closed_tasks_without_links_chart(df, output_dir, logger, implementation_issues=None):
+    """Create chart for closed tasks without comments, attachments, links, and merge request mentions"""
+    logger.info("GENERATING CLOSED TASKS WITHOUT COMMENTS, ATTACHMENTS, LINKS, AND MERGE REQUEST MENTIONS CHART")
     chart_paths = {}
 
     try:
@@ -468,13 +474,51 @@ def create_closed_tasks_without_links_chart(df, output_dir, logger):
         status_categories = get_status_categories(df)
         closed_statuses = status_categories['closed_statuses']
 
-        # Filter tasks with closed statuses, without comments, attachments, and links
-        closed_tasks = df[df['status'].isin(closed_statuses) &
-                          (~df['has_comments']) &
-                          (~df['has_attachments']) &
-                          (~df['has_links'])]
+        # Первичная фильтрация задач
+        pre_filtered_tasks = df[df['status'].isin(closed_statuses) &
+                                (~df['has_comments']) &
+                                (~df['has_attachments']) &
+                                (~df['has_links'])]
 
-        logger.info(f"FOUND {len(closed_tasks)} CLOSED TASKS WITHOUT COMMENTS, ATTACHMENTS, AND LINKS")
+        logger.info(f"Pre-filtered {len(pre_filtered_tasks)} closed tasks without comments, attachments, and links")
+
+        # Если есть raw_issues, выполняем дополнительную фильтрацию по упоминаниям merge requests
+        closed_tasks = pre_filtered_tasks
+
+        if implementation_issues:
+            from modules.dashboard import has_merge_request_mentions
+
+            # Создаем маппинг ключей задач к их raw_issues
+            issue_mapping = {issue.get('key'): issue for issue in implementation_issues if issue.get('key')}
+
+            # Фильтруем задачи с упоминаниями merge requests
+            filtered_indices = []
+            mentions_count = 0
+
+            for idx, row in pre_filtered_tasks.iterrows():
+                issue_key = row['issue_key']
+                raw_issue = issue_mapping.get(issue_key)
+
+                if raw_issue:
+                    if not has_merge_request_mentions(raw_issue):
+                        filtered_indices.append(idx)
+                    else:
+                        mentions_count += 1
+                else:
+                    # Если не нашли raw issue, считаем что задача всё равно подходит
+                    filtered_indices.append(idx)
+                    logger.warning(f"Could not find raw issue for {issue_key} for merge request mention check")
+
+            logger.info(f"Filtered out {mentions_count} issues with merge request mentions")
+
+            # Фильтруем DataFrame
+            if filtered_indices:
+                closed_tasks = pre_filtered_tasks.loc[filtered_indices]
+            else:
+                closed_tasks = pd.DataFrame(columns=pre_filtered_tasks.columns)
+
+        logger.info(
+            f"FOUND {len(closed_tasks)} CLOSED TASKS WITHOUT COMMENTS, ATTACHMENTS, LINKS, AND MERGE REQUEST MENTIONS")
 
         if len(closed_tasks) > 0:
             # Вывести пример задач для отладки
@@ -498,13 +542,13 @@ def create_closed_tasks_without_links_chart(df, output_dir, logger):
                 plt.tight_layout()
         else:
             # Create an empty chart with a message
-            plt.text(0.5, 0.5, "Нет закрытых задач без комментариев, вложений и связей",
+            plt.text(0.5, 0.5, "Нет закрытых задач без комментариев, вложений, связей и упоминаний merge requests",
                      horizontalalignment='center', verticalalignment='center',
                      transform=plt.gca().transAxes, fontsize=14)
             plt.xticks([])
             plt.yticks([])
 
-        plt.title('Закрытые задачи без комментариев, вложений и связей')
+        plt.title('Закрытые задачи без комментариев, вложений, связей и упоминаний merge requests')
         plt.xlabel('Проект')
         plt.ylabel('Количество задач')
 
@@ -527,7 +571,7 @@ def create_closed_tasks_without_links_chart(df, output_dir, logger):
             project_issue_keys[project] = project_tasks['issue_key'].tolist()
             # Для отладки
             logger.info(
-                f"Project {project}: {len(project_tasks)} closed tasks without comments, attachments, and links")
+                f"Project {project}: {len(project_tasks)} closed tasks without comments, attachments, links, and merge request mentions")
 
         # Получаем все ключи задач
         all_issue_keys = closed_tasks['issue_key'].tolist() if not closed_tasks.empty else []
@@ -540,7 +584,7 @@ def create_closed_tasks_without_links_chart(df, output_dir, logger):
 
         closed_tasks_data = {
             'count': len(closed_tasks),
-            'by_project': closed_tasks.groupby('project').size().to_dict() if not closed_tasks.empty else {},
+            'by_project': closed_tasks_by_project.to_dict() if not closed_tasks.empty else {},
             'issue_keys': all_issue_keys,
             'by_project_issue_keys': project_issue_keys
         }

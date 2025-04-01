@@ -469,7 +469,12 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
                 # Combine both filtered issues and implementation issues into a single structure
                 combined_issues = {
                     "filtered_issues": filtered_issues,
-                    "all_implementation_issues": implementation_issues
+                    "all_implementation_issues": implementation_issues,
+                    "additional_data": {
+                        "clm_issues": clm_issues,
+                        "est_issues": est_issues,
+                        "improvement_issues": improvement_issues
+                    }
                 }
 
                 raw_issues_path = os.path.join(output_dir, 'raw_issues.json')
@@ -488,7 +493,12 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
                 # Still use the combined structure for consistency
                 combined_issues = {
                     "filtered_issues": implementation_issues,
-                    "all_implementation_issues": implementation_issues
+                    "all_implementation_issues": implementation_issues,
+                    "additional_data": {
+                        "clm_issues": clm_issues,
+                        "est_issues": est_issues,
+                        "improvement_issues": improvement_issues
+                    }
                 }
 
                 raw_issues_path = os.path.join(output_dir, 'raw_issues.json')
@@ -716,6 +726,8 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
         # Create visualizations
         analysis_state['status_message'] = 'Creating visualizations...'
         analysis_state['progress'] = 70
+
+        # Передаем implementation_issues в функцию create_visualizations
         chart_paths = analyzer.create_visualizations(df, output_dir)
 
         # For CLM analysis, create additional CLM summary visualization
@@ -852,15 +864,6 @@ def run_analysis(data_source='jira', use_filter=True, filter_id=114476, jql_quer
         analysis_state['status_message'] = f'Analysis complete. Charts saved to {output_dir}.'
         analysis_state['progress'] = 100
         analysis_state['last_run'] = timestamp
-
-        # Save raw issues for diagnostics - no longer needed since we already saved the combined issues
-        if data_source != 'clm':
-            # Only for Jira mode - for CLM mode we already saved a more comprehensive structure
-            raw_issues_path = os.path.join(output_dir, 'raw_issues.json')
-            with open(raw_issues_path, 'w', encoding='utf-8') as f:
-                json.dump(issues, f, indent=2, ensure_ascii=False)
-            logger.info(f"Raw issue data saved to {raw_issues_path}")
-
 
     except Exception as e:
         logger.error(f"Error during analysis: {e}", exc_info=True)
