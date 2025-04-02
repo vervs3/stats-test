@@ -46,6 +46,25 @@ class ClmErrorCreator:
         # Initialize cache for field options to avoid repeated API calls
         self.field_options_cache = {}
 
+        # Cache for link types
+        self.link_types = []
+        self.default_link_type = "Relates"  # Default link type if none specified
+
+        # Fetch and cache available link types
+        if self.api_token:
+            self.link_types = self.get_available_link_types()
+
+            # Find the best link type to use as default
+            # Поместили "Requirements" в начало списка предпочтительных типов связи
+            preferred_link_types = ["Requirements", "Relates", "relates to", "relates", "Related", "Relationship",
+                                    "CLM Link", "links CLM to", "Relates to"]
+
+            for preferred in preferred_link_types:
+                if any(lt.get('name') == preferred for lt in self.link_types):
+                    self.default_link_type = preferred
+                    logger.info(f"Using '{preferred}' as the default link type")
+                    break
+
         # Load subsystem mapping from Excel file
         self.subsystem_mapping = self._load_subsystem_mapping()
 
@@ -368,14 +387,55 @@ class ClmErrorCreator:
             logger.error(f"Error getting issue details for {issue_key}: {e}", exc_info=True)
             return None
 
-    def create_link(self, source_issue_key, target_issue_key, link_type="links CLM to"):
+    def get_available_link_types(self):
+        """
+        Get all available issue link types from Jira
+
+        Returns:
+            list: List of link type dictionaries with inward, outward, and name properties
+        """
+        if not self.api_token:
+            logger.error("API token not available, cannot fetch link types")
+            return []
+
+        try:
+            # Call Jira API to get link types
+            url = f"{self.jira_url}/rest/api/2/issueLinkType"
+            logger.info(f"Fetching available link types from {url}")
+
+            response = requests.get(
+                url,
+                headers=self.headers,
+                timeout=30
+            )
+
+            if response.status_code != 200:
+                logger.error(f"Error fetching link types: Status code {response.status_code}")
+                logger.error(f"Response: {response.text[:200]}...")
+                return []
+
+            # Parse response
+            link_types_data = response.json()
+            link_types = link_types_data.get('issueLinkTypes', [])
+
+            # Log available link types
+            logger.info(f"Found {len(link_types)} available link types:")
+            for lt in link_types:
+                logger.info(f"Link type: {lt.get('name')} (Inward: {lt.get('inward')}, Outward: {lt.get('outward')})")
+
+            return link_types
+        except Exception as e:
+            logger.error(f"Error getting link types: {e}", exc_info=True)
+            return []
+
+    def create_link(self, source_issue_key, target_issue_key, link_type=None):
         """
         Create a link between two issues
 
         Args:
             source_issue_key (str): Source issue key
             target_issue_key (str): Target issue key
-            link_type (str): Link type (default: "links CLM to")
+            link_type (str, optional): Link type name. If None, the default link type will be used.
 
         Returns:
             bool: True if successful, False otherwise
@@ -386,6 +446,20 @@ class ClmErrorCreator:
             return False
 
         try:
+            # Use the provided link type or the default
+            link_type = link_type or self.default_link_type
+            logger.info(f"Attempting to create link with type '{link_type}'")
+
+            # Check if the link type exists in our cached link types
+            if self.link_types:
+                link_type_exists = any(lt.get('name') == link_type for lt in self.link_types)
+
+                if not link_type_exists:
+                    # If requested link type doesn't exist, use default link type
+                    logger.warning(
+                        f"Link type '{link_type}' not found in available types, using '{self.default_link_type}' instead")
+                    link_type = self.default_link_type
+
             # Create link via API
             url = f"{self.jira_url}/rest/api/2/issueLink"
             logger.info(f"Creating link from {source_issue_key} to {target_issue_key} with type '{link_type}'")
@@ -417,6 +491,52 @@ class ClmErrorCreator:
             else:
                 logger.error(f"Error creating link: Status code {response.status_code}")
                 logger.error(f"Response: {response.text[:500]}...")
+
+                # If the first attempt failed and we used a custom link type, try with the default link type
+                if link_type != self.default_link_type:
+                    logger.info(f"Trying again with default link type '{self.default_link_type}'")
+                    link_data["type"]["name"] = self.default_link_type
+
+                    retry_response = requests.post(
+                        url,
+                        headers=self.headers,
+                        data=json.dumps(link_data),
+                        timeout=30
+                    )
+
+                    if retry_response.status_code in [200, 201, 204]:
+                        logger.info(f"Successfully created link on second attempt")
+                        return True
+                    else:
+                        logger.error(f"Second attempt also failed: Status code {retry_response.status_code}")
+                        logger.error(f"Response: {retry_response.text[:500]}...")
+
+                # If there are no cached link types or both attempts failed, try to get the link types again
+                if not self.link_types:
+                    logger.info("No cached link types available, fetching them now")
+                    self.link_types = self.get_available_link_types()
+
+                    if self.link_types:
+                        # Try one more time with the first available link type
+                        first_link_type = self.link_types[0].get('name')
+                        logger.info(f"Trying third attempt with first available link type: '{first_link_type}'")
+
+                        link_data["type"]["name"] = first_link_type
+                        third_response = requests.post(
+                            url,
+                            headers=self.headers,
+                            data=json.dumps(link_data),
+                            timeout=30
+                        )
+
+                        if third_response.status_code in [200, 201, 204]:
+                            logger.info(f"Successfully created link on third attempt with '{first_link_type}'")
+                            # Update default link type for future usage
+                            self.default_link_type = first_link_type
+                            return True
+                        else:
+                            logger.error(f"Third attempt also failed: Status code {third_response.status_code}")
+
                 return False
 
         except Exception as e:
@@ -474,7 +594,7 @@ class ClmErrorCreator:
                 ('Product Group', 'DIGITAL_BSS'),
                 ('Subsystem', subsystem),
                 ('Urgency', 'B - High'),
-                ('Company', 'investment'),
+                ('Company', '825'),
                 ('Production/Test', 'DEVELOPMENT')
             ]
 
@@ -504,7 +624,12 @@ class ClmErrorCreator:
                 logger.info(
                     f"Setting field '{field_name}' (id: {field_id}, type: {field_type}, custom: {custom_type}, is_select: {is_select})")
 
-                if is_select:
+                # Special handling for Company field which expects an array of strings
+                if field_name == 'Company':
+                    # The field expects an array of strings
+                    issue_data['fields'][field_id] = ["825"]  # e.g., ["investment"]
+                    logger.info(f"Set field '{field_name}' as array with value '['825']'")
+                elif is_select:
                     # For select fields, we need to find the option ID
                     option_id = self.find_option_id(field_id, value)
 
