@@ -27,7 +27,7 @@
                             <li>Product Group: DIGITAL_BSS</li>
                             <li>Subsystem: определяется на основе компонента исходной задачи</li>
                             <li>Urgency: B - High</li>
-                            <li>Company: investment</li>
+                            <li>Company: investment (ID: 825)</li>
                             <li>Production/Test: DEVELOPMENT</li>
                         </ul>
                     </div>
@@ -63,6 +63,65 @@
                             </table>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- История создания CLM Error -->
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h3>История создания CLM Error</h3>
+                </div>
+                <div class="card-body">
+                    {% if creation_results %}
+                        <div class="table-responsive">
+                            <table class="table table-striped">
+                                <thead>
+                                    <tr>
+                                        <th>Исходная задача</th>
+                                        <th>CLM Error</th>
+                                        <th>Статус</th>
+                                        <th>Дата</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for result in creation_results|sort(attribute='timestamp', reverse=True) %}
+                                    <tr>
+                                        <td>
+                                            <a href="https://jira.nexign.com/browse/{{ result.source_key }}" target="_blank">
+                                                {{ result.source_key }}
+                                            </a>
+                                        </td>
+                                        <td>
+                                            {% if result.clm_error_key %}
+                                                <a href="https://jira.nexign.com/browse/{{ result.clm_error_key }}" target="_blank">
+                                                    {{ result.clm_error_key }}
+                                                </a>
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        </td>
+                                        <td>
+                                            {% if result.status == 'success' %}
+                                                <span class="badge bg-success">Успешно</span>
+                                            {% else %}
+                                                <span class="badge bg-danger">Ошибка</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ result.timestamp }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="alert alert-info">
+                            <p>История создания CLM Error пуста.</p>
+                        </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -134,151 +193,192 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-// Form for creating CLM Errors
-const clmErrorForm = document.getElementById('clm-error-form');
-const createButton = document.getElementById('create-button');
-const createSpinner = document.getElementById('create-spinner');
-const resultsContainer = document.getElementById('results-container');
-const resultsTable = document.getElementById('results-table');
+    <script src="{{ url_for('static', filename='js/clm_error_creator.js') }}"></script>
+    <script>
+        // Add new results to history table without page refresh
+        function addResultToHistoryTable(sourceKey, clmErrorKey, status, timestamp) {
+            // Find the history table
+            const historyTable = document.querySelector('.card:nth-child(2) tbody');
+            if (!historyTable) return;
 
-// Form for uploading mapping file
-const uploadMappingForm = document.getElementById('upload-mapping-form');
-const uploadButton = document.getElementById('upload-button');
-const uploadSpinner = document.getElementById('upload-spinner');
+            // Create a new row
+            const newRow = document.createElement('tr');
 
-// Error modal
-const errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
-const errorMessage = document.getElementById('error-message');
+            // Add source key cell
+            const sourceCell = document.createElement('td');
+            const sourceLink = document.createElement('a');
+            sourceLink.href = `https://jira.nexign.com/browse/${sourceKey}`;
+            sourceLink.target = '_blank';
+            sourceLink.textContent = sourceKey;
+            sourceCell.appendChild(sourceLink);
+            newRow.appendChild(sourceCell);
 
-// Handle CLM Error form submission
-clmErrorForm.addEventListener('submit', function(e) {
-e.preventDefault();
+            // Add CLM Error key cell
+            const clmErrorCell = document.createElement('td');
+            if (clmErrorKey) {
+                const clmErrorLink = document.createElement('a');
+                clmErrorLink.href = `https://jira.nexign.com/browse/${clmErrorKey}`;
+                clmErrorLink.target = '_blank';
+                clmErrorLink.textContent = clmErrorKey;
+                clmErrorCell.appendChild(clmErrorLink);
+            } else {
+                clmErrorCell.textContent = '-';
+            }
+            newRow.appendChild(clmErrorCell);
 
-// Show spinner and disable button
-createSpinner.classList.remove('d-none');
-createButton.disabled = true;
+            // Add status cell
+            const statusCell = document.createElement('td');
+            if (status === 'success') {
+                statusCell.innerHTML = '<span class="badge bg-success">Успешно</span>';
+            } else {
+                statusCell.innerHTML = '<span class="badge bg-danger">Ошибка</span>';
+            }
+            newRow.appendChild(statusCell);
 
-// Get form data
-const formData = new FormData();
-formData.append('issue_keys', document.getElementById('issue-keys').value);
+            // Add timestamp cell
+            const timestampCell = document.createElement('td');
+            timestampCell.textContent = timestamp || new Date().toLocaleString();
+            newRow.appendChild(timestampCell);
 
-// Send request
-fetch('/api/create-clm-errors', {
-method: 'POST',
-body: formData
-})
-.then(response => response.json())
-.then(data => {
-if (data.success) {
-// Show results container
-resultsContainer.classList.remove('d-none');
+            // Add to the top of the table
+            historyTable.insertBefore(newRow, historyTable.firstChild);
 
-// Clear previous results
-resultsTable.innerHTML = '';
+            // If history was empty, remove the empty message
+            const emptyMessage = document.querySelector('.card:nth-child(2) .alert-info');
+            if (emptyMessage) {
+                emptyMessage.remove();
+            }
+        }
 
-// Add results to table
-const results = data.results;
-for (const [issueKey, clmErrorKey] of Object.entries(results)) {
-const row = document.createElement('tr');
+        // Modify the form submit handler to update history
+        document.addEventListener('DOMContentLoaded', function() {
+            const clmErrorForm = document.getElementById('clm-error-form');
+            if (clmErrorForm) {
+                const originalSubmitHandler = clmErrorForm.onsubmit;
 
-// Original issue key
-const issueCell = document.createElement('td');
-const issueLink = document.createElement('a');
-issueLink.href = `https://jira.nexign.com/browse/${issueKey}`;
-issueLink.target = '_blank';
-issueLink.textContent = issueKey;
-issueCell.appendChild(issueLink);
-row.appendChild(issueCell);
+                clmErrorForm.addEventListener('submit', function(e) {
+                    e.preventDefault();
 
-// CLM Error key
-const clmErrorCell = document.createElement('td');
-if (clmErrorKey) {
-const clmErrorLink = document.createElement('a');
-clmErrorLink.href = `https://jira.nexign.com/browse/${clmErrorKey}`;
-clmErrorLink.target = '_blank';
-clmErrorLink.textContent = clmErrorKey;
-clmErrorCell.appendChild(clmErrorLink);
-} else {
-clmErrorCell.textContent = 'Не создан';
-}
-row.appendChild(clmErrorCell);
+                    // Show spinner and disable button
+                    const createSpinner = document.getElementById('create-spinner');
+                    const createButton = document.getElementById('create-button');
+                    if (createSpinner) createSpinner.classList.remove('d-none');
+                    if (createButton) createButton.disabled = true;
 
-// Status
-const statusCell = document.createElement('td');
-if (clmErrorKey) {
-statusCell.innerHTML = '<span class="badge bg-success">Успешно</span>';
-} else {
-statusCell.innerHTML = '<span class="badge bg-danger">Ошибка</span>';
-}
-row.appendChild(statusCell);
+                    // Get issue keys
+                    const issueKeysInput = document.getElementById('issue-keys');
+                    const issueKeys = issueKeysInput ? issueKeysInput.value.trim() : '';
 
-resultsTable.appendChild(row);
-}
-} else {
-// Show error modal
-errorMessage.textContent = data.error || 'Произошла ошибка при создании CLM Error';
-errorModal.show();
-}
-})
-.catch(error => {
-console.error('Error:', error);
-errorMessage.textContent = 'Произошла ошибка при отправке запроса';
-errorModal.show();
-})
-.finally(() => {
-// Hide spinner and enable button
-createSpinner.classList.add('d-none');
-createButton.disabled = false;
-});
-});
+                    if (!issueKeys) {
+                        // Show error
+                        const errorMessage = document.getElementById('error-message');
+                        if (errorMessage) errorMessage.textContent = 'Введите ключи задач Jira';
 
-// Handle mapping file upload
-uploadMappingForm.addEventListener('submit', function(e) {
-e.preventDefault();
+                        const errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
+                        errorModal.show();
 
-// Get file
-const file = document.getElementById('mapping-file').files[0];
-if (!file) {
-errorMessage.textContent = 'Выберите файл для загрузки';
-errorModal.show();
-return;
-}
+                        // Reset UI
+                        if (createSpinner) createSpinner.classList.add('d-none');
+                        if (createButton) createButton.disabled = false;
+                        return;
+                    }
 
-// Show spinner and disable button
-uploadSpinner.classList.remove('d-none');
-uploadButton.disabled = true;
+                    // Create form data
+                    const formData = new FormData();
+                    formData.append('issue_keys', issueKeys);
 
-// Create form data
-const formData = new FormData();
-formData.append('mapping_file', file);
+                    // Send request
+                    fetch('/api/create-clm-errors', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            // Show results container
+                            const resultsContainer = document.getElementById('results-container');
+                            if (resultsContainer) resultsContainer.classList.remove('d-none');
 
-// Send request
-fetch('/api/upload-subsystem-mapping', {
-method: 'POST',
-body: formData
-})
-.then(response => response.json())
-.then(data => {
-if (data.success) {
-// Reload page to show updated subsystems
-window.location.reload();
-} else {
-// Show error modal
-errorMessage.textContent = data.error || 'Произошла ошибка при загрузке файла';
-errorModal.show();
-}
-})
-.catch(error => {
-console.error('Error:', error);
-errorMessage.textContent = 'Произошла ошибка при отправке запроса';
-errorModal.show();
-})
-.finally(() => {
-// Hide spinner and enable button
-uploadSpinner.classList.add('d-none');
-uploadButton.disabled = false;
-});
-</script>
+                            // Clear previous results
+                            const resultsTable = document.getElementById('results-table');
+                            if (resultsTable) resultsTable.innerHTML = '';
+
+                            // Add results to table
+                            const results = data.results || {};
+
+                            for (const [issueKey, clmErrorKey] of Object.entries(results)) {
+                                // Add to results table
+                                if (resultsTable) {
+                                    const row = document.createElement('tr');
+
+                                    // Original issue key
+                                    const issueCell = document.createElement('td');
+                                    const issueLink = document.createElement('a');
+                                    issueLink.href = `https://jira.nexign.com/browse/${issueKey}`;
+                                    issueLink.target = '_blank';
+                                    issueLink.textContent = issueKey;
+                                    issueCell.appendChild(issueLink);
+                                    row.appendChild(issueCell);
+
+                                    // CLM Error key
+                                    const clmErrorCell = document.createElement('td');
+                                    if (clmErrorKey) {
+                                        const clmErrorLink = document.createElement('a');
+                                        clmErrorLink.href = `https://jira.nexign.com/browse/${clmErrorKey}`;
+                                        clmErrorLink.target = '_blank';
+                                        clmErrorLink.textContent = clmErrorKey;
+                                        clmErrorCell.appendChild(clmErrorLink);
+                                    } else {
+                                        clmErrorCell.textContent = 'Не создан';
+                                    }
+                                    row.appendChild(clmErrorCell);
+
+                                    // Status
+                                    const statusCell = document.createElement('td');
+                                    if (clmErrorKey) {
+                                        statusCell.innerHTML = '<span class="badge bg-success">Успешно</span>';
+                                    } else {
+                                        statusCell.innerHTML = '<span class="badge bg-danger">Ошибка</span>';
+                                    }
+                                    row.appendChild(statusCell);
+
+                                    resultsTable.appendChild(row);
+                                }
+
+                                // Add to history table
+                                addResultToHistoryTable(
+                                    issueKey,
+                                    clmErrorKey,
+                                    clmErrorKey ? 'success' : 'failed',
+                                    new Date().toLocaleString()
+                                );
+                            }
+                        } else {
+                            // Show error modal
+                            const errorMessage = document.getElementById('error-message');
+                            if (errorMessage) errorMessage.textContent = data.error || 'Произошла ошибка при создании CLM Error';
+
+                            const errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
+                            errorModal.show();
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+
+                        // Show error modal
+                        const errorMessage = document.getElementById('error-message');
+                        if (errorMessage) errorMessage.textContent = 'Произошла ошибка при отправке запроса: ' + error.message;
+
+                        const errorModal = new bootstrap.Modal(document.getElementById('errorModal'));
+                        errorModal.show();
+                    })
+                    .finally(() => {
+                        // Reset UI
+                        if (createSpinner) createSpinner.classList.add('d-none');
+                        if (createButton) createButton.disabled = false;
+                    });
+                });
+            }
+        });
+    </script>
 {% endblock %}

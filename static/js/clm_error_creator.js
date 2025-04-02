@@ -2,11 +2,8 @@
  * CLM Error Creator functionality
  */
 
-// Добавим отладочный вывод
-console.log('CLM Error Creator JS loaded');
-
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('DOM Content Loaded in CLM Error Creator JS');
+    console.log('CLM Error Creator JS loaded');
 
     // Form for creating CLM Errors
     const clmErrorForm = document.getElementById('clm-error-form');
@@ -36,6 +33,61 @@ document.addEventListener('DOMContentLoaded', function() {
     let errorModal;
     if (errorModalElement) {
         errorModal = new bootstrap.Modal(errorModalElement);
+    }
+
+    // Function to add new results to history table
+    function addResultToHistoryTable(sourceKey, clmErrorKey, status) {
+        // Find the history table
+        const historyTable = document.querySelector('.card:nth-child(2) tbody');
+        if (!historyTable) return;
+
+        // Create a new row
+        const newRow = document.createElement('tr');
+
+        // Add source key cell
+        const sourceCell = document.createElement('td');
+        const sourceLink = document.createElement('a');
+        sourceLink.href = `https://jira.nexign.com/browse/${sourceKey}`;
+        sourceLink.target = '_blank';
+        sourceLink.textContent = sourceKey;
+        sourceCell.appendChild(sourceLink);
+        newRow.appendChild(sourceCell);
+
+        // Add CLM Error key cell
+        const clmErrorCell = document.createElement('td');
+        if (clmErrorKey) {
+            const clmErrorLink = document.createElement('a');
+            clmErrorLink.href = `https://jira.nexign.com/browse/${clmErrorKey}`;
+            clmErrorLink.target = '_blank';
+            clmErrorLink.textContent = clmErrorKey;
+            clmErrorCell.appendChild(clmErrorLink);
+        } else {
+            clmErrorCell.textContent = '-';
+        }
+        newRow.appendChild(clmErrorCell);
+
+        // Add status cell
+        const statusCell = document.createElement('td');
+        if (status === 'success' || clmErrorKey) {
+            statusCell.innerHTML = '<span class="badge bg-success">Успешно</span>';
+        } else {
+            statusCell.innerHTML = '<span class="badge bg-danger">Ошибка</span>';
+        }
+        newRow.appendChild(statusCell);
+
+        // Add timestamp cell
+        const timestampCell = document.createElement('td');
+        timestampCell.textContent = new Date().toLocaleString();
+        newRow.appendChild(timestampCell);
+
+        // Add to the top of the table
+        historyTable.insertBefore(newRow, historyTable.firstChild);
+
+        // If history was empty, remove the empty message
+        const emptyMessage = document.querySelector('.card:nth-child(2) .alert-info');
+        if (emptyMessage) {
+            emptyMessage.remove();
+        }
     }
 
     // Handle CLM Error form submission
@@ -128,6 +180,9 @@ document.addEventListener('DOMContentLoaded', function() {
                             row.appendChild(statusCell);
 
                             resultsTable.appendChild(row);
+
+                            // Also add to history table
+                            addResultToHistoryTable(issueKey, clmErrorKey, clmErrorKey ? 'success' : 'failed');
                         }
                     }
                 } else {
@@ -145,6 +200,12 @@ document.addEventListener('DOMContentLoaded', function() {
                 // Hide spinner and enable button
                 if (createSpinner) createSpinner.classList.add('d-none');
                 if (createButton) createButton.disabled = false;
+
+                // Clear input field
+                if (issueKeysInput) {
+                    issueKeysInput.value = '';
+                    issueKeysInput.focus();
+                }
             });
         });
     } else {
@@ -215,4 +276,24 @@ document.addEventListener('DOMContentLoaded', function() {
             alert(message);
         }
     }
+
+    // Fetch updated results periodically (can be enabled if needed)
+    /*
+    function fetchUpdatedResults() {
+        fetch('/api/clm-error-results')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.results && data.results.length > 0) {
+                    // Update the history table with the latest results
+                    // (Implementation could be added if needed)
+                }
+            })
+            .catch(error => {
+                console.error('Error fetching results:', error);
+            });
+    }
+
+    // Fetch updated results every 30 seconds
+    // setInterval(fetchUpdatedResults, 30000);
+    */
 });
