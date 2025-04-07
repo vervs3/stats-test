@@ -213,7 +213,7 @@ class ClmErrorCreator:
 
     def _match_component_to_subsystem(self, component):
         """
-        Match component to subsystem based on first 3 characters
+        Match component to subsystem based on first 3 characters with improved matching
 
         Args:
             component (str): Component name
@@ -229,11 +229,47 @@ class ClmErrorCreator:
         component_lower = component.lower()
         logger.info(f"Matching component '{component}' to subsystem")
 
-        # Try to find a match based on first 3 characters
+        # List of subsystems with corresponding patterns to check
+        # Format: (subsystem, [list of patterns to check])
+        subsystem_patterns = [
+            ("UDB", ["udb", "user data"]),
+            ("NUS", ["nus", "notification"]),
+            ("NBSSPORTAL", ["portal", "nbssportal", "ui"]),
+            ("CHM", ["chm", "catalog", "product"]),
+            ("ATS", ["ats", "task", "automation"]),
+            ("SSO", ["sso", "auth", "login"]),
+            ("DMS", ["dms", "document"]),
+            ("TUDS", ["tuds", "technical"]),
+            ("LIS", ["lis", "license"]),
+            ("APC", ["apc"]),
+            ("CSM", ["csm"]),
+            ("ECS", ["ecs"]),
+            ("NPM_PORTAL", ["npm"]),
+            ("NSG", ["nsg"]),
+            ("PASS", ["pass"]),
+            ("PAYMENT_MANAGEMENT", ["payment"]),
+            ("VMS", ["vms"])
+        ]
+
+        # First try to find an exact match in the mapping
+        if component in self.subsystem_mapping:
+            logger.info(f"Found exact component match in mapping: '{component}'")
+            return component
+
+        # Then try to match the component using the patterns
+        for subsystem, patterns in subsystem_patterns:
+            for pattern in patterns:
+                if pattern in component_lower:
+                    if subsystem in self.subsystem_mapping:
+                        logger.info(
+                            f"Matched component '{component}' to subsystem '{subsystem}' using pattern '{pattern}'")
+                        return subsystem
+
+        # If no pattern match, try to find a match based on first 3 characters
         for subsystem in self.subsystem_mapping:
             if subsystem and len(subsystem) >= 3 and len(component) >= 3:
                 if subsystem[:3].lower() in component_lower or component_lower[:3] in subsystem.lower():
-                    logger.info(f"Matched component '{component}' to subsystem '{subsystem}'")
+                    logger.info(f"Matched component '{component}' to subsystem '{subsystem}' using first 3 characters")
                     return subsystem
 
         # If no match found, log and return default
@@ -566,10 +602,47 @@ class ClmErrorCreator:
                 logger.error(f"Could not get details for issue {issue_key}, aborting CLM Error creation")
                 return None
 
+            # Define the subsystem IDs mapping first
+            subsystem_ids = {
+                "NBSS_CORE": "1011",  # Default if not matched to a specific ID
+                "APC": "23923",
+                "CSM": "23817",
+                "ECS": "14187",
+                "NBSSPORTAL": "27398",
+                "NPM_PORTAL": "27400",
+                "NSG": "27373",
+                "NUS": "23932",
+                "PASS": "23764",
+                "PAYMENT_MANAGEMENT": "14274",
+                "UDB": "23924",
+                "VMS": "23767"
+            }
+
             # Match component to subsystem
             component = issue_details.get('component', '')
             subsystem = self._match_component_to_subsystem(component)
             logger.info(f"Using subsystem '{subsystem}' for issue {issue_key} with component '{component}'")
+
+            # Determine the subsystem ID based on the matched subsystem
+            subsystem_id = None
+            if subsystem:
+                # First check for exact match
+                if subsystem in subsystem_ids:
+                    subsystem_id = subsystem_ids[subsystem]
+                    logger.info(f"Found exact subsystem ID match: {subsystem_id} for {subsystem}")
+                else:
+                    # Try to match based on prefix
+                    for sub_name, sub_id in subsystem_ids.items():
+                        if subsystem.startswith(sub_name) or sub_name.startswith(subsystem):
+                            subsystem_id = sub_id
+                            logger.info(
+                                f"Found partial subsystem ID match: {subsystem_id} for {subsystem} using {sub_name}")
+                            break
+
+            # Fallback to NBSS_CORE (default subsystem) if no match found
+            if not subsystem_id:
+                subsystem_id = subsystem_ids.get("NBSS_CORE", "1011")
+                logger.info(f"No subsystem ID match found, using default: {subsystem_id}")
 
             # Create CLM Error issue
             url = f"{self.jira_url}/rest/api/2/issue/"
@@ -589,62 +662,121 @@ class ClmErrorCreator:
                 }
             }
 
-            # Add custom fields with proper format for multi-select fields
+            # Add custom fields with proper ID values
             fields_to_set = [
-                ('Product Group', 'DIGITAL_BSS'),
-                ('Subsystem', subsystem),
-                ('Urgency', 'B - High'),
-                ('Company', '825'),
-                ('Production/Test', 'DEVELOPMENT')
+                # Basic fields
+                ('Product Group', '1011'),  # ID for DIGITAL_BSS
+                ('Subsystem', subsystem_id),  # Use the resolved subsystem ID
+                ('Urgency', 'B - High'),  # Keep as is if ID not known
+                ('Company', '825'),  # Keep as is
+                ('Production/Test', 'DEVELOPMENT'),  # Keep as is if ID not known
+
+                # PM Fields using same approach as Company
+                ('customfield_17813', '169086'),  # Investment - NBSS 2025
+                ('customfield_17812', '170958'),  # Text field
+
+                # Additional fields from other tabs
+                ('customfield_17814', ''),  # Milestone (can be left empty)
+                ('customfield_17819', '')  # Requirement/Backlog (can be left empty)
             ]
 
             # Set each field with the correct format based on the field type
+            successful_fields = 0
+            required_fields = len(fields_to_set)
+
+            # Process all fields with field_ids lookup or special handling
             for field_name, value in fields_to_set:
-                field_id = self.field_ids.get(field_name)
-                if not field_id:
-                    logger.warning(f"Could not find field ID for '{field_name}', skipping")
-                    continue
-
-                # Get field info from create metadata
-                field_info = {}
-                if self.create_meta and 'fields' in self.create_meta:
-                    field_info = self.create_meta['fields'].get(field_id, {})
-
-                schema = field_info.get('schema', {})
-                field_type = schema.get('type', '')
-                custom_type = schema.get('custom', '')
-
-                # Check if this is a select list (options) field
-                is_select = (
-                        field_info.get('allowedValues') is not None or
-                        custom_type == 'com.atlassian.jira.plugin.system.customfieldtypes:select' or
-                        custom_type == 'com.atlassian.jira.plugin.system.customfieldtypes:multiselect'
-                )
-
-                logger.info(
-                    f"Setting field '{field_name}' (id: {field_id}, type: {field_type}, custom: {custom_type}, is_select: {is_select})")
-
-                # Special handling for Company field which expects an array of strings
-                if field_name == 'Company':
-                    # The field expects an array of strings
-                    issue_data['fields'][field_id] = ["825"]  # e.g., ["investment"]
-                    logger.info(f"Set field '{field_name}' as array with value '['825']'")
-                elif is_select:
-                    # For select fields, we need to find the option ID
-                    option_id = self.find_option_id(field_id, value)
-
-                    if option_id:
-                        # For select fields, use {'id': 'option_id'}
-                        issue_data['fields'][field_id] = {'id': option_id}
-                        logger.info(f"Set field '{field_name}' to option ID '{option_id}'")
+                try:
+                    # Special handling for custom field IDs that are passed directly
+                    if field_name.startswith('customfield_'):
+                        field_id = field_name
+                        logger.info(f"Using direct field ID: {field_id}")
                     else:
-                        # If we couldn't find the option ID, try using {'value': 'value'}
-                        issue_data['fields'][field_id] = {'value': value}
-                        logger.info(f"Set field '{field_name}' to value '{value}' (fallback)")
-                else:
-                    # For non-select fields, use the value directly
-                    issue_data['fields'][field_id] = value
-                    logger.info(f"Set field '{field_name}' to direct value '{value}'")
+                        field_id = self.field_ids.get(field_name)
+                        if not field_id:
+                            logger.warning(f"Could not find field ID for '{field_name}', skipping")
+                            continue
+
+                    # Get field info from create metadata
+                    field_info = {}
+                    if self.create_meta and 'fields' in self.create_meta:
+                        field_info = self.create_meta['fields'].get(field_id, {})
+
+                    schema = field_info.get('schema', {})
+                    field_type = schema.get('type', '')
+                    custom_type = schema.get('custom', '')
+
+                    # Check if this is a select list (options) field
+                    is_select = (
+                            field_info.get('allowedValues') is not None or
+                            custom_type == 'com.atlassian.jira.plugin.system.customfieldtypes:select' or
+                            custom_type == 'com.atlassian.jira.plugin.system.customfieldtypes:multiselect'
+                    )
+
+                    logger.info(
+                        f"Setting field '{field_name}' (id: {field_id}, type: {field_type}, custom: {custom_type}, is_select: {is_select})")
+
+                    # Special handling for specific field formats
+                    if field_name == 'Company':
+                        # The field expects an array of strings
+                        issue_data['fields'][field_id] = ["825"]  # e.g., ["investment"]
+                        logger.info(f"Set field '{field_name}' as array with value '['825']'")
+                        successful_fields += 1
+                    elif field_name == 'customfield_17813':
+                        # Investment field - set as an array like Company
+                        issue_data['fields'][field_id] = [value]
+                        logger.info(f"Set field '{field_name}' as array with value '[{value}]'")
+                        successful_fields += 1
+                    elif field_name == 'customfield_17812':
+                        # Text field - set as an array like Company
+                        issue_data['fields'][field_id] = [value]
+                        logger.info(f"Set field '{field_name}' as array with value '[{value}]'")
+                        successful_fields += 1
+                    elif field_name in ['customfield_17814', 'customfield_17819']:
+                        # Skip empty dropdown fields - don't set them at all if value is empty
+                        if value:
+                            issue_data['fields'][field_id] = [value]  # Use array format like Company
+                            logger.info(f"Set field '{field_name}' as array with value '[{value}]'")
+                            successful_fields += 1
+                        else:
+                            logger.info(f"Skipping empty field '{field_name}'")
+                            # Don't count optional empty fields against successful_fields count
+                            required_fields -= 1
+                    elif is_select:
+                        # For select fields like Product Group and Subsystem, use ID directly
+                        if field_name in ['Product Group', 'Subsystem']:
+                            # For these fields, we know we should use the ID directly
+                            issue_data['fields'][field_id] = {'id': value}
+                            logger.info(f"Set field '{field_name}' with direct ID '{value}'")
+                            successful_fields += 1
+                        else:
+                            # For other select fields, try to find the option ID
+                            option_id = self.find_option_id(field_id, value)
+
+                            if option_id:
+                                # For select fields, use {'id': 'option_id'}
+                                issue_data['fields'][field_id] = {'id': option_id}
+                                logger.info(f"Set field '{field_name}' to option ID '{option_id}'")
+                                successful_fields += 1
+                            else:
+                                # If we couldn't find the option ID, try using {'value': 'value'}
+                                issue_data['fields'][field_id] = {'value': value}
+                                logger.info(f"Set field '{field_name}' to value '{value}' (fallback)")
+                                successful_fields += 1
+                    else:
+                        # For non-select fields, use the value directly
+                        issue_data['fields'][field_id] = value
+                        logger.info(f"Set field '{field_name}' to direct value '{value}'")
+                        successful_fields += 1
+                except Exception as e:
+                    logger.error(f"Error setting field '{field_name}': {e}")
+                    # Continue with other fields even if one fails
+
+            # Check if all required fields were successfully set
+            if successful_fields < required_fields:
+                logger.error(f"Not all required fields were set successfully: {successful_fields}/{required_fields}")
+                logger.error(f"Aborting CLM Error creation for {issue_key}")
+                return None
 
             # Log the request payload (without sensitive data)
             try:
