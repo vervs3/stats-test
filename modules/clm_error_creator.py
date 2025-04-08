@@ -6,6 +6,8 @@ from datetime import datetime
 import pandas as pd
 import requests
 from io import BytesIO
+from .status_transitioner import ClmStatusTransitioner
+
 
 # Get logger
 logger = logging.getLogger(__name__)
@@ -42,6 +44,14 @@ class ClmErrorCreator:
             logger.error("config.py file not found. Create a config.py file with an api_token variable")
             self.api_token = None
             self.headers = {}
+
+        # Initialize the status transitioner
+        self.status_transitioner = ClmStatusTransitioner(self)
+
+        # Start the transition monitor if API token is available
+        if self.api_token:
+            self.status_transitioner.start_transition_monitor()
+            logger.info("Started CLM Error status transition monitor")
 
         # Initialize cache for field options to avoid repeated API calls
         self.field_options_cache = {}
@@ -991,3 +1001,30 @@ class ClmErrorCreator:
 
         logger.info(f"Completed CLM Errors creation. Results: {results}")
         return results
+
+    # Add a new method to the ClmErrorCreator class
+    def stop_status_monitor(self):
+        """Stop the status transition monitor"""
+        if hasattr(self, 'status_transitioner'):
+            self.status_transitioner.stop_transition_monitor()
+            logger.info("Stopped CLM Error status transition monitor")
+
+    # Add a new method to manually trigger transitions for testing
+    def trigger_transitions(self, clm_key):
+        """
+        Manually trigger status transitions for a CLM Error
+
+        Args:
+            clm_key (str): CLM Error issue key
+
+        Returns:
+            tuple: (studying_result, received_result) - both booleans
+        """
+        if not hasattr(self, 'status_transitioner'):
+            logger.error("Status transitioner not initialized")
+            return False, False
+
+        studying_result = self.status_transitioner._transition_to_studying(clm_key)
+        received_result = self.status_transitioner._transition_to_received(clm_key)
+
+        return studying_result, received_result
