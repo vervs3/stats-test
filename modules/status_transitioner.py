@@ -69,6 +69,94 @@ class ClmStatusTransitioner:
         self.create_meta = self.get_create_meta()
         self.field_ids = self._get_field_ids()
 
+    def _get_component_mapping_data(self, component):
+        """
+        Get Product Group and Subsystem mapping data for a given component.
+        Enhanced to support specific component to Product Group and Subsystem mappings.
+
+        Args:
+            component (str): Component name from the source issue
+
+        Returns:
+            tuple: (product_group_id, subsystem_id, subsystem_name, subsystem_version_id)
+        """
+        # Default values
+        default_product_group_id = "1011"  # DIGITAL_BSS
+        default_subsystem_id = "1011"  # NBSS_CORE
+        default_subsystem_name = "NBSS_CORE"
+        default_version_id = "22550"  # Default version ID
+
+        # If no component provided, return defaults
+        if not component:
+            logger.warning(f"No component provided, using defaults (DIGITAL_BSS/NBSS_CORE)")
+            return default_product_group_id, default_subsystem_id, default_subsystem_name, default_version_id
+
+        # Convert component to lowercase for case-insensitive matching
+        component_lower = component.lower()
+        logger.info(f"Getting mapping data for component '{component}'")
+
+        # ВАЖНО: Специальная проверка для компонентов tailored.xxx
+        if component_lower.startswith("tailored."):
+            tailored_product_group_id = "1011"  # DIGITAL_BSS (можно изменить при необходимости)
+            tailored_subsystem_id = "27227"  # ID для TAILORED_NBSS 2 (используйте правильный ID)
+            tailored_subsystem_name = "TAILORED_NBSS 2"
+            tailored_version_id = "2.1.0"  # ID версии для TAILORED_NBSS 2 (используйте правильный ID)
+
+            logger.info(f"Component '{component}' matched as tailored component, mapping to TAILORED_NBSS 2")
+            return tailored_product_group_id, tailored_subsystem_id, tailored_subsystem_name, tailored_version_id
+
+        # Specific component mappings as provided
+        component_mappings = {
+            # Format: component_pattern: (product_group_id, subsystem_id, subsystem_name, version_id)
+            # Original mappings
+            "lis": ("992", "27228", "LIS 8", "8.9.1"),  # RND, LIS 8
+            "cnc": ("992", "14257", "CNC 9", "11.8.0"),  # RND, CNC 9
+            "crab": ("992", "23636", "CRAB 9", "9.19.0"),  # RND, CRAB 9
+            "fpm": ("992", "23967", "FPM 3", "3.2.2"),  # RND, FPM 3
+            "praim": ("992", "23921", "PRAIM 1", "1.3.0"),  # RND, PRAIM 1
+            "cpm": ("952", "14250", "CPM 10", "11.6.0"),  # CRM, CPM 10
+            "sso": ("974", "23635", "SSO 10", "10.17.0"),  # ISEM, SSO 10
+            "ats": ("974", "23635", "SSO 10", "10.17.0"),  # ISEM, SSO 10
+
+            # DIGITAL_BSS mappings (kept from original logic)
+            "udb": ("1011", "23924", "UDB", "2.7.0"),
+            "nus": ("1011", "23932", "NUS", "1.5.2"),
+            "nbssportal": ("1011", "27398", "NBSSPORTAL", "1.0.0"),
+            "chm": ("1011", "23923", "CHM", "22550"),
+            "apc": ("1011", "23923", "APC", "1.5.0"),
+            "csm": ("1011", "23817", "CSM", "1.5.1"),
+            "ecs": ("1011", "14187", "ECS", "22550"),
+            "npm": ("1011", "27400", "NPM_PORTAL", "22550"),
+            "nsg": ("1011", "27373", "NSG", "1.0.0"),
+            "pass": ("1011", "23764", "PASS", "1.5.3"),
+            "payment": ("1011", "14274", "PAYMENT_MANAGEMENT", "3.2.3"),
+            "vms": ("1011", "23767", "VMS", "1.2.0"),
+
+            # New mappings
+            "gus": ("980", "23920", "GUS 4", "4.11.1"),  # BFAM, GUS 4
+            "uniblp": ("973", "14263", "UNIBLP 2", "2.18.0"),  # PAYS, UNIBLP 2
+            "dms": ("1010", "27464", "DMS 2", "1.6.13"),  # UFM, DMS 2
+            "nlm": ("1010", "23815", "NLM 1", "1.3.0"),  # UFM, NLM 1
+            "osa": ("974", "23635", "SSO 10", "4.10.0"),  # ISEM, SSO 10
+            "dgs": ("967", "24119", "DGS 3", "3.3.3"),  # TDP, DGS 3
+            "lam": ("981", "23799", "LAM 1", "1.2.0"),  # RIM, LAM 1
+            "tailored": ("1011", "27227", "TAILORED_NBSS 2", "2.1.0"),  # DIGITAL_BSS, TAILORED_NBSS 2
+            "tailored.": ("1011", "27227", "TAILORED_NBSS 2", "2.1.0"),  # Match any tailored.xxx component
+            "psc": ("988", "23625", "PSC 10", "10.12.2"),  # PSC, PSC 10
+            "pic": ("949", "23657", "PIC 4", "4.12.1"),  # BIN, PIC 4
+            "sam": ("955", "14278", "SAM 1", "1.10.0")  # HEX, SAM 1
+        }
+
+        # Check for direct matches in component mappings
+        for pattern, mapping in component_mappings.items():
+            if pattern in component_lower:
+                logger.info(f"Found direct mapping for component '{component}' using pattern '{pattern}'")
+                return mapping
+
+        # If no specific mapping found, use default DIGITAL_BSS and NBSS_CORE
+        logger.warning(f"No specific mapping found for component '{component}', using defaults")
+        return default_product_group_id, default_subsystem_id, default_subsystem_name, default_version_id
+
     def _get_field_ids(self):
         """
         Get field IDs for CLM project from the create metadata
@@ -551,48 +639,6 @@ class ClmStatusTransitioner:
             # Возвращаем значение по умолчанию в случае ошибки
             return "22550"
 
-    def _find_latest_version_id(self, field_options, field_id):
-        """
-        Find the latest version ID from available versions
-
-        Args:
-            field_options (dict): Field options dictionary
-            field_id (str): Field ID for versions
-
-        Returns:
-            str: Latest version ID or None if not found
-        """
-        if not field_options or field_id not in field_options:
-            return None
-
-        versions = []
-        for option in field_options[field_id]:
-            option_value = option.get('value', option.get('name', ''))
-            option_id = option.get('id')
-            # Extract version number using regex
-            import re
-            match = re.search(r'(\d+(\.\d+)*)', option_value)
-            if match:
-                version_str = match.group(1)
-                try:
-                    # Convert version to tuple of integers for comparison
-                    version_parts = [int(part) for part in version_str.split('.')]
-                    versions.append((version_parts, option_id, option_value))
-                except ValueError:
-                    # If conversion fails, still include the version
-                    versions.append(([0], option_id, option_value))
-            else:
-                # Include non-versioned options with lowest priority
-                versions.append(([0], option_id, option_value))
-
-        # Sort versions by numeric value (descending)
-        versions.sort(reverse=True)
-        if versions:
-            logger.info(f"Found latest version: {versions[0][2]} (ID: {versions[0][1]})")
-            return versions[0][1]
-
-        return None
-
     def _get_field_options_for_issue(self, issue_key):
         """
         Get field options for specific issue, especially for version fields
@@ -631,190 +677,103 @@ class ClmStatusTransitioner:
             # Возвращаем пустой словарь в случае ошибки
             return {}
 
-    def _get_field_options(self, field_id):
-        """Получить доступные опции для поля через API"""
-        try:
-            url = f"{self.clm_creator.jira_url}/rest/api/2/field/{field_id}/option"
-
-            response = requests.get(
-                url,
-                headers=self.clm_creator.headers,
-                timeout=30
-            )
-
-            if response.status_code != 200:
-                logger.warning(f"Could not fetch options for {field_id}: {response.status_code}")
-
-                # Попробуем альтернативный способ получения опций
-                meta_url = f"{self.clm_creator.jira_url}/rest/api/2/issue/createmeta?projectKeys=CLM&issuetypeNames=Error&expand=projects.issuetypes.fields"
-                meta_response = requests.get(
-                    meta_url,
-                    headers=self.clm_creator.headers,
-                    timeout=30
-                )
-
-                if meta_response.status_code != 200:
-                    logger.warning(f"Could not fetch metadata: {meta_response.status_code}")
-                    return []
-
-                meta = meta_response.json()
-
-                try:
-                    # Извлекаем опции из метаданных
-                    fields = meta.get('projects', [])[0].get('issuetypes', [])[0].get('fields', {})
-                    field_info = fields.get(field_id, {})
-                    allowed_values = field_info.get('allowedValues', [])
-
-                    logger.info(f"Found {len(allowed_values)} options for {field_id} in metadata")
-                    return allowed_values
-                except (IndexError, KeyError) as e:
-                    logger.error(f"Error parsing metadata: {e}")
-                    return []
-
-            options_data = response.json()
-            return options_data.get('values', [])
-        except Exception as e:
-            logger.error(f"Error getting field options: {e}", exc_info=True)
-            return []
-
     def _prepare_transition_fields(self, issue_key, custom_fields=None, transition_type=None):
         """
-        Подготовка полей для перехода с использованием того же подхода, что и при создании тикета
+        Prepare fields for transition with enhanced component mapping
 
         Args:
-            issue_key (str): Ключ задачи Jira
-            custom_fields (dict): Дополнительные поля и их значения
-            transition_type (str): Тип перехода ('studying' или 'received')
+            issue_key (str): Jira issue key
+            custom_fields (dict): Additional fields and values
+            transition_type (str): Type of transition ('studying' or 'received')
 
         Returns:
-            dict: Подготовленные поля для перехода
+            dict: Prepared fields for transition
         """
         try:
-            # Инициализируем пустой словарь для полей
+            # Initialize empty dictionary for fields
             result_fields = {}
 
-            # Если не переданы пользовательские поля, используем пустой словарь
+            # If no custom fields provided, use empty dict
             custom_fields = custom_fields or {}
 
             logger.info(f"Preparing fields for transition type: {transition_type}")
 
-            # Получаем информацию о метаданных полей
+            # Get field metadata if available
             field_meta = {}
             if hasattr(self.clm_creator, 'create_meta') and self.clm_creator.create_meta:
                 if 'fields' in self.clm_creator.create_meta:
                     field_meta = self.clm_creator.create_meta['fields']
 
-            # Определение Product Group и Subsystem на основе связанного тикета RMBSS
-            product_group_id = '1011'  # Default ID for DIGITAL_BSS
-            subsystem_id = '1011'  # Default ID for NBSS_CORE
+            # Default mapping for DIGITAL_BSS/NBSS_CORE
+            product_group_id = '1011'  # Default for DIGITAL_BSS
+            subsystem_id = '1011'  # Default for NBSS_CORE
+            subsystem_version_id = '22550'  # Default version ID
 
-            # Ищем информацию о связанном RMBSS тикете в creation_results.json
+            # Find information about related RMBSS ticket in creation_results.json
             source_issue_key = None
             try:
-                # Проверяем, не является ли наш issue_key уже RMBSS тикетом
+                # Check if issue_key is already an RMBSS ticket
                 if issue_key.startswith('RMBSS-'):
                     source_issue_key = issue_key
                     logger.info(f"Issue {issue_key} is already a source issue (RMBSS)")
                 else:
-                    # Ищем связанный тикет RMBSS в results_file
+                    # Look for related RMBSS ticket in results_file
                     results_file = os.path.join('data', 'clm_results', 'creation_results.json')
                     if os.path.exists(results_file):
                         with open(results_file, 'r', encoding='utf-8') as f:
                             creation_results = json.load(f)
-                            # Ищем запись, где clm_error_key соответствует нашему issue_key
+                            # Find entry where clm_error_key matches our issue_key
                             for result in creation_results:
                                 if result.get('clm_error_key') == issue_key:
                                     source_issue_key = result.get('source_key')
                                     logger.info(f"Found source issue {source_issue_key} for CLM Error {issue_key}")
                                     break
 
-                # Если нашли исходный тикет, пытаемся получить его компонент
+                # If we found the source ticket, try to get its component
                 if source_issue_key:
                     source_issue_details = self.clm_creator.get_issue_details(source_issue_key)
                     if source_issue_details:
-                        # Извлекаем компонент из исходного тикета
+                        # Extract component from source ticket
                         component = source_issue_details.get('component', '')
                         if component:
                             logger.info(f"Found component '{component}' in source issue {source_issue_key}")
 
-                            # Определяем соответствующую подсистему на основе компонента
-                            subsystem = self._match_component_to_subsystem(component)
+                            # Use the enhanced mapping function
+                            product_group_id, subsystem_id, _, subsystem_version_id = self._get_component_mapping_data(
+                                component)
 
-                            # Определяем ID подсистемы на основе её названия
-                            subsystem_ids = {
-                                "NBSS_CORE": "1011",  # Default if not matched to a specific ID
-                                "APC": "23923",
-                                "CSM": "23817",
-                                "ECS": "14187",
-                                "NBSSPORTAL": "27398",
-                                "NPM_PORTAL": "27400",
-                                "NSG": "27373",
-                                "NUS": "23932",
-                                "PASS": "23764",
-                                "PAYMENT_MANAGEMENT": "14274",
-                                "UDB": "23924",
-                                "VMS": "23767"
-                            }
-
-                            # Определяем ID подсистемы
-                            if subsystem in subsystem_ids:
-                                subsystem_id = subsystem_ids[subsystem]
-                                logger.info(f"Mapped subsystem '{subsystem}' to ID '{subsystem_id}'")
-                            else:
-                                # Ищем частичное совпадение
-                                for sub_name, sub_id in subsystem_ids.items():
-                                    if subsystem.startswith(sub_name) or sub_name.startswith(subsystem):
-                                        subsystem_id = sub_id
-                                        logger.info(
-                                            f"Mapped subsystem '{subsystem}' to ID '{subsystem_id}' using partial match")
-                                        break
+                            logger.info(
+                                f"Mapped component '{component}' to Product Group ID '{product_group_id}' and Subsystem ID '{subsystem_id}'")
             except Exception as e:
                 logger.error(f"Error finding source issue for {issue_key}: {e}", exc_info=True)
 
-            # Получаем доступные опции для полей
+            # Get field options for the issue
             field_options = self._get_field_options_for_issue(issue_key)
 
-            # Находим правильный ID для Error Type (customfield_12405)
-            error_type_option_id = None
-            if field_options and 'customfield_12405' in field_options:
-                for option in field_options['customfield_12405']:
-                    option_value = option.get('value', '')
-                    if 'Insignificant' in option_value or 'test area' in option_value or '32-' in option_value:
-                        error_type_option_id = option.get('id')
-                        logger.info(
-                            f"Found matching Error Type option: {option_value} (ID: {error_type_option_id})")
-                        break
-
-            # Если не нашли подходящий ID, используем стандартное значение
-            if not error_type_option_id:
-                error_type_option_id = "12010"  # Используем значение по умолчанию
-
-            # Подготавливаем список полей для установки в зависимости от типа перехода
-            fields_to_set = []
-
-            # Общие поля для всех переходов
+            # Common fields for all transitions
             common_fields = [
-                # Общие поля для всех переходов
-                ('Product Group', product_group_id),  # ID for DIGITAL_BSS
-                ('Subsystem', subsystem_id),  # Use the resolved subsystem ID
+                # Common fields using mapped values
+                ('Product Group', product_group_id),
+                ('Subsystem', subsystem_id),
                 ('customfield_17813', '169086'),  # Investment - NBSS 2025
                 ('customfield_17812', '170958'),  # Text field
             ]
 
-            # Специфичные поля для перехода в Studying
+            # Specific fields for transition to Studying
             studying_fields = [
                 ('customfield_12405', {"value": "12010"}),
-                ('customfield_17816', {"id": "25405"}),# Current Sprint
+                ('customfield_17816', {"id": "25405"}),  # Current Sprint
             ]
 
-            # Специфичные поля для перехода в Received
+            # Specific fields for transition to Received
             received_fields = [
                 ('customfield_12409', '35200'),  # Subtype
                 ('customfield_12415', '12030'),  # Workaround
-                ('customfield_12408', self._get_latest_version()),  # Subsystem version
+                ('customfield_12408', subsystem_version_id),  # Subsystem version with proper mapping
             ]
 
-            # Формируем итоговый список полей в зависимости от типа перехода
+            # Form final list of fields based on transition type
+            fields_to_set = []
             fields_to_set.extend(common_fields)
 
             if transition_type == 'studying':
@@ -822,17 +781,20 @@ class ClmStatusTransitioner:
             elif transition_type == 'received':
                 fields_to_set.extend(received_fields)
 
-
-            # Добавляем специальные поля, которые могут быть переданы извне
+            # Add custom fields that might be passed from outside
             for k, v in custom_fields.items():
-                # Проверяем, нет ли уже такого поля в списке
+                # Check if field is already in the list
                 if not any(field_name == k for field_name, _ in fields_to_set):
                     fields_to_set.append((k, v))
 
-            # Устанавливаем поля с правильным форматом
+            # Set fields with proper format based on field type
+            successful_fields = 0
+            required_fields = len(fields_to_set)
+
+            # Process all fields with field_ids lookup or special handling
             for field_name, value in fields_to_set:
                 try:
-                    # Преобразуем имя поля в field_id, если нужно
+                    # Special handling for custom field IDs passed directly
                     if field_name.startswith('customfield_'):
                         field_id = field_name
                         logger.info(f"Using direct field ID: {field_id}")
@@ -842,135 +804,104 @@ class ClmStatusTransitioner:
                             logger.warning(f"Could not find field ID for '{field_name}', skipping")
                             continue
 
-                    # Получаем информацию о поле из метаданных
-                    field_info = field_meta.get(field_id, {})
+                    # Get field info from create metadata
+                    field_info = {}
+                    if self.create_meta and 'fields' in self.create_meta:
+                        field_info = self.create_meta['fields'].get(field_id, {})
+
                     schema = field_info.get('schema', {})
                     field_type = schema.get('type', '')
                     custom_type = schema.get('custom', '')
 
-                    # Проверяем, является ли поле списком с возможностью выбора
+                    # Check if field is a select list
                     is_select = (
                             field_info.get('allowedValues') is not None or
                             custom_type == 'com.atlassian.jira.plugin.system.customfieldtypes:select' or
                             custom_type == 'com.atlassian.jira.plugin.system.customfieldtypes:multiselect'
                     )
 
-                    # Проверяем, является ли поле массивом
+                    # Check if field is an array
                     is_array = field_type == 'array' or custom_type == 'com.atlassian.jira.plugin.system.customfieldtypes:multiselect'
 
                     logger.info(
                         f"Setting field '{field_name}' (id: {field_id}, type: {field_type}, custom: {custom_type}, is_select: {is_select}, is_array: {is_array})")
 
-                    # Специальная обработка для конкретных полей
+                    # Special handling for specific field formats
                     if field_id in ['customfield_12311', 'customfield_12312']:
                         # These fields use a different structure for SQLFeed plugin
-                        result_fields[field_id] = [value]  # Just using array format instead of {id: value}
+                        result_fields[field_id] = [value]  # Using array format
                         logger.info(f"Set SQLFeed field '{field_id}' as array: [{value}]")
+                        successful_fields += 1
                     elif field_name in ['customfield_17813', 'customfield_17812']:
-                        # Эти поля ожидают массив строк
+                        # These fields expect array of strings
                         result_fields[field_id] = [value]
                         logger.info(f"Set field '{field_id}' as array of strings: [{value}]")
+                        successful_fields += 1
                     elif field_id == 'customfield_12408':  # Subsystem version
-                        # Это поле передается как массив строк
+                        # This field is passed as array of strings
                         result_fields[field_id] = [value]
                         logger.info(f"Set field '{field_id}' as array of strings: [{value}]")
-                    elif field_id == 'customfield_12405':  # Current Sprint
-                        # Просто строковое значение для этого поля
+                        successful_fields += 1
+                    elif field_id == 'customfield_12405':  # Error Type
+                        # String value for this field
                         result_fields[field_id] = [value]
                         logger.info(f"Set field '{field_id}' as array (default): [{value}]")
+                        successful_fields += 1
                     elif field_name in ['Product Group', 'Subsystem']:
-                        # Для этих полей используем ID напрямую
+                        # For these fields use ID directly
                         result_fields[field_id] = {'id': value}
                         logger.info(f"Set field '{field_name}' with direct ID '{value}'")
+                        successful_fields += 1
                     elif is_select:
-                        # Для полей выбора используем объект с id
+                        # For select fields like Product Group and Subsystem, use ID directly
                         result_fields[field_id] = {'id': value}
                         logger.info(f"Set field '{field_id}' as object with id: {{id: {value}}}")
+                        successful_fields += 1
                     elif is_array:
-                        # Для массивов без доп. информации используем массив строк
+                        # For arrays without additional info use array of strings
                         result_fields[field_id] = [value]
                         logger.info(f"Set field '{field_id}' as array (default): [{value}]")
+                        successful_fields += 1
                     else:
-                        # Для остальных полей используем строку
+                        # For other fields use string directly
                         result_fields[field_id] = value
                         logger.info(f"Set field '{field_id}' as string: {value}")
-
+                        successful_fields += 1
                 except Exception as e:
-                    logger.error(f"Error setting field '{field_id}': {e}", exc_info=True)
-                    # Продолжаем с другими полями в случае ошибки
+                    logger.error(f"Error setting field '{field_id}': {e}")
+                    # Continue with other fields even if one fails
+
+            # Check if all required fields were successfully set
+            if successful_fields < required_fields:
+                logger.error(f"Not all required fields were set successfully: {successful_fields}/{required_fields}")
+                logger.warning(f"Continuing with partial field set for {issue_key}")
 
             return result_fields
-
         except Exception as e:
             logger.error(f"Error preparing transition fields: {e}", exc_info=True)
             return {}
 
-
     def _match_component_to_subsystem(self, component):
         """
-        Match component to subsystem based on first 3 characters with improved matching
+        Match component to subsystem based on enhanced mapping logic.
+        Uses the new _get_component_mapping_data method for consistent mapping.
 
         Args:
             component (str): Component name
 
         Returns:
-            str: Matched subsystem or default value
+            str: Matched subsystem name or default value
         """
-        if not component or not self.subsystem_mapping:
-            logger.warning(f"No component provided or subsystem mapping is empty. Using default 'NBSS_CORE'")
+        if not component:
+            logger.warning(f"No component provided. Using default 'NBSS_CORE'")
             return "NBSS_CORE"  # Default subsystem
 
-        # Convert component to lowercase for case-insensitive matching
-        component_lower = component.lower()
-        logger.info(f"Matching component '{component}' to subsystem")
+        # Use the enhanced mapping function to get mapping data
+        _, _, subsystem_name, _ = self._get_component_mapping_data(component)
 
-        # List of subsystems with corresponding patterns to check
-        # Format: (subsystem, [list of patterns to check])
-        subsystem_patterns = [
-            ("UDB", ["udb", "user data"]),
-            ("NUS", ["nus", "notification"]),
-            ("NBSSPORTAL", ["portal", "nbssportal", "ui"]),
-            ("CHM", ["chm", "catalog", "product"]),
-            ("ATS", ["ats", "task", "automation"]),
-            ("SSO", ["sso", "auth", "login"]),
-            ("DMS", ["dms", "document"]),
-            ("TUDS", ["tuds", "technical"]),
-            ("LIS", ["lis", "license"]),
-            ("APC", ["apc"]),
-            ("CSM", ["csm"]),
-            ("ECS", ["ecs"]),
-            ("NPM_PORTAL", ["npm"]),
-            ("NSG", ["nsg"]),
-            ("PASS", ["pass"]),
-            ("PAYMENT_MANAGEMENT", ["payment"]),
-            ("VMS", ["vms"])
-        ]
-
-        # First try to find an exact match in the mapping
-        if component in self.subsystem_mapping:
-            logger.info(f"Found exact component match in mapping: '{component}'")
-            return component
-
-        # Then try to match the component using the patterns
-        for subsystem, patterns in subsystem_patterns:
-            for pattern in patterns:
-                if pattern in component_lower:
-                    if subsystem in self.subsystem_mapping:
-                        logger.info(
-                            f"Matched component '{component}' to subsystem '{subsystem}' using pattern '{pattern}'")
-                        return subsystem
-
-        # If no pattern match, try to find a match based on first 3 characters
-        for subsystem in self.subsystem_mapping:
-            if subsystem and len(subsystem) >= 3 and len(component) >= 3:
-                if subsystem[:3].lower() in component_lower or component_lower[:3] in subsystem.lower():
-                    logger.info(f"Matched component '{component}' to subsystem '{subsystem}' using first 3 characters")
-                    return subsystem
-
-        # If no match found, log and return default
-        logger.warning(f"No subsystem match found for component '{component}', using default 'NBSS_CORE'")
-        return "NBSS_CORE"  # Default subsystem
-
+        # Return just the subsystem name for backward compatibility
+        logger.info(f"Matched component '{component}' to subsystem '{subsystem_name}'")
+        return subsystem_name
 
     def _load_subsystem_mapping(self):
         """
@@ -1002,8 +933,6 @@ class ClmStatusTransitioner:
         except Exception as e:
             logger.error(f"Error loading subsystem mapping: {e}", exc_info=True)
             return []
-
-
 
     def get_create_meta(self):
         """
@@ -1080,7 +1009,6 @@ class ClmStatusTransitioner:
         except Exception as e:
             logger.error(f"Error getting create metadata: {e}", exc_info=True)
             return None
-
 
     def _get_field_ids(self):
         """
@@ -1180,47 +1108,15 @@ class ClmStatusTransitioner:
                 'Production/Test': 'customfield_17200'
             }
 
-
-    def find_option_id(self, field_id, option_name):
-        """
-        Find the option ID for a given option name in a multi-select field
-
-        Args:
-            field_id (str): Field ID
-            option_name (str): Option name to find
-
-        Returns:
-            str: Option ID or None if not found
-        """
-        options = self.get_field_options(field_id)
-
-        if not options:
-            logger.warning(f"No options found for field {field_id}")
-            return None
-
-        # Try to find the option by name (case insensitive)
-        option_name_lower = option_name.lower()
-        for option in options:
-            # Options can have 'value' or 'name' depending on the field type
-            option_value = option.get('value', option.get('name', ''))
-
-            if option_value.lower() == option_name_lower:
-                option_id = option.get('id')
-                logger.info(f"Found option ID {option_id} for '{option_name}' in field {field_id}")
-                return option_id
-
-        logger.warning(f"Could not find option '{option_name}' in field {field_id}")
-
-        # Log all available options for debugging
-        option_values = [option.get('value', option.get('name', '')) for option in options]
-        logger.info(f"Available options for field {field_id}: {option_values}")
-
-        return None
-
     def _transition_to_studying(self, issue_key):
         """
-        Transition a CLM Error issue to Studying status используя тот же формат полей,
-        что и при создании тикета в clm_error_creator, с конкретным значением Severity
+        Transition a CLM Error issue to Studying status using enhanced component mapping.
+
+        Args:
+            issue_key (str): CLM Error issue key
+
+        Returns:
+            bool: True if successful, False otherwise
         """
         if not self.api_token:
             logger.error(f"API token not available, cannot transition CLM Error {issue_key}")
@@ -1229,43 +1125,42 @@ class ClmStatusTransitioner:
         try:
             logger.info(f"Starting transition of CLM Error {issue_key} to Studying status")
 
-            # Получаем ID перехода
+            # Get transition ID
             transition_id = self._get_transition_id(issue_key, 'Studying')
 
             if not transition_id:
                 logger.error(f"Could not find transition ID for 'Studying' for issue {issue_key}")
                 return False
 
-            # Используем улучшенный метод _prepare_transition_fields для подготовки полей
-            # Важно: указываем transition_type='studying', чтобы получить только нужные поля
+            # Use enhanced _prepare_transition_fields method for field preparation
+            # This will automatically use component mapping logic
             transition_fields = self._prepare_transition_fields(
                 issue_key,
                 {
-                    # Передаем customfield_12405 как простую строку
-                    'customfield_12405': '12010',  # Sprint как строка
+                    'customfield_12405': '12010',  # Error Type
                     'customfield_17813': '169086',  # Investment - NBSS 2025
                     'customfield_17812': '170958'  # Text field
                 },
-                transition_type='studying'  # Указываем тип перехода
+                transition_type='studying'
             )
 
-            # Явно устанавливаем customfield_12405 как строку
+            # Explicitly set customfield_12405 as JSON object with ID
             if 'customfield_12405' in transition_fields:
-                transition_fields['customfield_12405'] = {"id": "12010"}  # Простая строка
+                transition_fields['customfield_12405'] = {"id": "12010"}
 
             if 'customfield_17816' in transition_fields:
-                transition_fields['customfield_17816'] = {"id": "25405"}
+                transition_fields['customfield_17816'] = {"id": "25405"}  # Current Sprint
 
             logger.info(f"Prepared fields for transition to Studying: {json.dumps(transition_fields)}")
 
-            # Выполняем запрос на переход
+            # Make transition request
             url = f"{self.clm_creator.jira_url}/rest/api/2/issue/{issue_key}/transitions"
 
             payload = {
                 "transition": {"id": transition_id}
             }
 
-            # Добавляем подготовленные поля, если они есть
+            # Add prepared fields if available
             if transition_fields:
                 payload["fields"] = transition_fields
 
@@ -1275,26 +1170,55 @@ class ClmStatusTransitioner:
                 logger.info(f"Successfully transitioned {issue_key} to Studying")
                 return True
 
-            # Проверяем, связана ли ошибка с договором заказчика
-            error_data = self._get_last_error(issue_key)
-            if error_data and 'errorMessages' in error_data:
-                for msg in error_data['errorMessages']:
-                    if 'Заказчика' in msg and 'договор' in msg:
-                        logger.warning(f"Business rule preventing transition: Contract issue")
-                        # Если проблема в контракте, вернем False чтобы помечать как ошибку
-                        return False
+            # If first attempt failed, try alternative approaches
 
-            # Проверяем альтернативный подход: использование базовых полей с правильным форматом
+            # Try with minimal fields
             logger.info(f"First attempt failed, trying alternative approach for {issue_key}")
 
-            # Создаем минимальный набор полей
             minimal_fields = {
-                "customfield_12405": {"value": "31-Insignificant,caused by reasons beyond control of Nexign"},  # Простая строка
-                "customfield_17813": ["169086"],  # Массив
-                "customfield_17812": ["170958"],  # Массив
-                "customfield_12311": ["1011"],  # Массив
-                "customfield_12312": ["23817"]  # Массив
+                "customfield_12405": {"value": "31-Insignificant,caused by reasons beyond control of Nexign"},
+                "customfield_17813": ["169086"],  # Investment
+                "customfield_17812": ["170958"],  # Text field
             }
+
+            # Get component info from related source issue
+            source_issue_key = None
+            try:
+                # Find source issue for this CLM issue
+                if issue_key.startswith('RMBSS-'):
+                    source_issue_key = issue_key
+                else:
+                    results_file = os.path.join('data', 'clm_results', 'creation_results.json')
+                    if os.path.exists(results_file):
+                        with open(results_file, 'r', encoding='utf-8') as f:
+                            creation_results = json.load(f)
+                            for result in creation_results:
+                                if result.get('clm_error_key') == issue_key:
+                                    source_issue_key = result.get('source_key')
+                                    break
+
+                if source_issue_key:
+                    # Get component from source issue
+                    source_issue_details = self.clm_creator.get_issue_details(source_issue_key)
+                    if source_issue_details:
+                        component = source_issue_details.get('component', '')
+                        if component:
+                            # Get mapped Product Group and Subsystem
+                            product_group_id, subsystem_id, _, _ = self._get_component_mapping_data(component)
+
+                            # Add Product Group and Subsystem fields
+                            minimal_fields["customfield_12311"] = [product_group_id]  # Product Group
+                            minimal_fields["customfield_12312"] = [subsystem_id]  # Subsystem
+
+                            logger.info(
+                                f"Added Product Group ID {product_group_id} and Subsystem ID {subsystem_id} from component '{component}'")
+            except Exception as e:
+                logger.error(f"Error getting component mapping data: {e}", exc_info=True)
+
+            # If we didn't get mapping from component, use default values
+            if "customfield_12311" not in minimal_fields:
+                minimal_fields["customfield_12311"] = ["1011"]  # Default DIGITAL_BSS
+                minimal_fields["customfield_12312"] = ["1011"]  # Default NBSS_CORE
 
             payload["fields"] = minimal_fields
 
@@ -1304,22 +1228,19 @@ class ClmStatusTransitioner:
                 logger.info(f"Successfully transitioned {issue_key} to Studying with minimal fields")
                 return True
 
-            # Пробуем еще один вариант без проблемного поля
+            # Try without customfield_12405 (Error Type)
             logger.info(f"Trying without customfield_12405 for {issue_key}")
 
-            # Убираем проблемное поле
-            fields_no_12405 = {
-                "customfield_17813": ["169086"],  # Массив
-                "customfield_17812": ["170958"],  # Массив
-                "customfield_12311": ["1011"],  # Массив
-                "customfield_12312": ["23817"]  # Массив
-            }
-
+            fields_no_12405 = {k: v for k, v in minimal_fields.items() if k != 'customfield_12405'}
             payload["fields"] = fields_no_12405
 
             result = self._make_api_request('POST', url, payload)
 
-            # Шаг 4: Попытка перехода без полей
+            if result is not None:
+                logger.info(f"Successfully transitioned {issue_key} to Studying without customfield_12405")
+                return True
+
+            # Last attempt - try without any fields
             logger.info(f"Trying transition without fields")
 
             minimal_payload = {
@@ -1328,8 +1249,8 @@ class ClmStatusTransitioner:
 
             minimal_result = self._make_api_request('POST', url, minimal_payload)
 
-            if result is not None:
-                logger.info(f"Successfully transitioned {issue_key} to Studying without customfield_12405")
+            if minimal_result is not None:
+                logger.info(f"Successfully transitioned {issue_key} to Studying without any fields")
                 return True
 
             logger.error(f"Failed to transition {issue_key} to Studying after multiple attempts")
@@ -1339,11 +1260,9 @@ class ClmStatusTransitioner:
             logger.error(f"Error transitioning {issue_key} to Studying: {e}", exc_info=True)
             return False
 
-
     def _transition_to_received(self, issue_key):
         """
-        Transition a CLM Error issue to Received status
-        Использует улучшенный метод подготовки полей
+        Transition a CLM Error issue to Received status using enhanced component mapping.
 
         Args:
             issue_key (str): CLM Error issue key
@@ -1352,62 +1271,93 @@ class ClmStatusTransitioner:
             bool: True if successful, False otherwise
         """
         try:
-            # Получаем ID перехода
+            # Get transition ID
             transition_id = self._get_transition_id(issue_key, 'Received')
 
             if not transition_id:
                 return False
 
-            # Получаем информацию о тикете
+            # Get issue details
             issue_details = self._get_issue_details(issue_key)
             if not issue_details:
                 logger.error(f"Could not get issue details for {issue_key}")
                 return False
 
-            # Получаем summary из деталей тикета
+            # Get summary from issue details
             summary = issue_details.get('summary', 'No summary provided')
 
-            # Получаем ID последней версии
-            subsystem_version_id = self._find_latest_version_id(
-                self._get_field_options_for_issue(issue_key),
-                'customfield_12408'
-            )
+            # Find source issue for component mapping
+            source_issue_key = None
+            component = None
+            subsystem_version_id = "22550"  # Default version ID
 
-            # Если не удалось получить версию, используем последнюю из скриншота - 1.3.4
-            if not subsystem_version_id or subsystem_version_id == "0":  # "0" - это "Please select"
-                subsystem_version_id = "1.3.4"  # Последняя версия из скриншота
-                logger.info(f"Using latest version from screenshot: {subsystem_version_id}")
+            try:
+                # Find source issue for this CLM issue
+                if issue_key.startswith('RMBSS-'):
+                    source_issue_key = issue_key
+                else:
+                    results_file = os.path.join('data', 'clm_results', 'creation_results.json')
+                    if os.path.exists(results_file):
+                        with open(results_file, 'r', encoding='utf-8') as f:
+                            creation_results = json.load(f)
+                            for result in creation_results:
+                                if result.get('clm_error_key') == issue_key:
+                                    source_issue_key = result.get('source_key')
+                                    break
 
-            # Подготавливаем поля для перехода
+                if source_issue_key:
+                    # Get component from source issue
+                    source_issue_details = self.clm_creator.get_issue_details(source_issue_key)
+                    if source_issue_details:
+                        component = source_issue_details.get('component', '')
+            except Exception as e:
+                logger.error(f"Error finding source issue: {e}", exc_info=True)
+
+            # If we found a component, get component mapping
+            if component:
+                # Get mapped Product Group, Subsystem, and Version
+                product_group_id, subsystem_id, _, subsystem_version_id = self._get_component_mapping_data(component)
+                logger.info(f"Using Subsystem version ID {subsystem_version_id} for component '{component}'")
+            else:
+                # Get latest version as fallback
+                subsystem_version_id = self._get_latest_version()
+                logger.info(f"Using latest version ID {subsystem_version_id} (fallback)")
+
+            # Prepare fields for transition using enhanced method
             fields = self._prepare_transition_fields(issue_key, {
-                # Обязательные поля для перехода в Received
                 'customfield_12409': '35200',  # Subtype
                 'customfield_12397': summary,  # Summary
                 'customfield_12408': subsystem_version_id,  # Subsystem version
                 'customfield_12415': '12030',  # Workaround
                 'customfield_17813': '169086',  # Investment
                 'customfield_17812': '170958'  # Text field
-            })
+            }, transition_type='received')
 
             logger.info(f"Attempting transition to Received with fields: {fields}")
 
             if self._try_transition(issue_key, transition_id, fields):
                 return True
 
-            # Если не получилось, попробуем еще несколько вариантов форматов
+            # If not successful, try alternative field formats
 
-            # Вариант 2: Более простые форматы полей
+            # Variant 2: Simpler field format
             simple_fields = {
                 "customfield_12409": {"id": "35200"},
                 "customfield_12397": summary,
-                "customfield_12408": subsystem_version_id,  # Просто строка
+                "customfield_12408": [subsystem_version_id],
                 "customfield_12415": {"id": "12030"}
             }
+
+            # Add Product Group and Subsystem if we have component information
+            if component:
+                product_group_id, subsystem_id, _, _ = self._get_component_mapping_data(component)
+                simple_fields["customfield_12311"] = [product_group_id]  # Product Group
+                simple_fields["customfield_12312"] = [subsystem_id]  # Subsystem
 
             if self._try_transition(issue_key, transition_id, simple_fields):
                 return True
 
-            # Вариант 3: Все поля как массивы
+            # Variant 3: All fields as arrays
             array_fields = {
                 "customfield_12409": {"id": "35200"},
                 "customfield_12397": summary,
@@ -1417,10 +1367,16 @@ class ClmStatusTransitioner:
                 "customfield_17812": ["170958"]
             }
 
+            # Add Product Group and Subsystem if we have component information
+            if component:
+                product_group_id, subsystem_id, _, _ = self._get_component_mapping_data(component)
+                array_fields["customfield_12311"] = [product_group_id]  # Product Group
+                array_fields["customfield_12312"] = [subsystem_id]  # Subsystem
+
             if self._try_transition(issue_key, transition_id, array_fields):
                 return True
 
-            # Вариант 4: Без дополнительных полей
+            # Variant 4: Minimal fields
             minimal_fields = {
                 "customfield_12409": {"id": "35200"},
                 "customfield_12408": [subsystem_version_id],
@@ -1437,23 +1393,6 @@ class ClmStatusTransitioner:
         except Exception as e:
             logger.error(f"Error transitioning {issue_key} to Received: {e}", exc_info=True)
             return False
-
-    def _get_last_error(self, issue_key):
-        """
-        Получить последнюю ошибку из лога для данного тикета
-
-        Args:
-            issue_key (str): Ключ задачи
-
-        Returns:
-            dict: Словарь с ошибками или None
-        """
-        # Если у нас нет хранилища ошибок, создадим его
-        if not hasattr(self, '_last_errors'):
-            self._last_errors = {}
-
-        # Возвращаем последнюю ошибку для тикета
-        return self._last_errors.get(issue_key)
 
     def _try_transition(self, issue_key, transition_id, fields):
         """
@@ -1494,68 +1433,3 @@ class ClmStatusTransitioner:
         except Exception as e:
             logger.error(f"Error in transition attempt: {e}", exc_info=True)
             return False
-
-    def _get_subsystem_version_for_issue(self, issue_key):
-        """
-        Получить доступные версии Subsystem для конкретного тикета и выбрать последнюю
-
-        Args:
-            issue_key (str): Ключ задачи
-
-        Returns:
-            str: ID последней версии Subsystem или None
-        """
-        try:
-            # В идеале здесь должен быть запрос к Jira API для получения доступных версий
-            # для конкретного Subsystem этого тикета
-            # Но в отсутствие прямого доступа к этой информации используем стандартный подход
-
-            # Получаем информацию о тикете, включая поля Subsystem
-            issue_details = self._get_issue_details(issue_key)
-            if not issue_details:
-                logger.error(f"Could not get issue details for {issue_key}")
-                return "22550"  # Возвращаем значение по умолчанию
-
-            # В идеальном случае мы бы извлекли значение Subsystem из тикета
-            # и затем запросили доступные версии для этого Subsystem
-
-            # Но пока используем жесткий список версий и выбираем последнюю
-            versions = [
-                {"id": "22400", "value": "NBSS 5.2.0"},
-                {"id": "22450", "value": "NBSS 5.3.0"},
-                {"id": "22500", "value": "NBSS 5.4.0"},
-                {"id": "22550", "value": "NBSS 5.5.0"}
-            ]
-
-            # Находим версию с наибольшим номером
-            latest_version = None
-            latest_version_id = None
-
-            for option in versions:
-                version_name = option.get('value', '')
-                version_id = option.get('id')
-
-                # Извлечение номера версии с помощью regex
-                match = re.search(r'(\d+\.\d+\.\d+)', version_name)
-                if match:
-                    version_str = match.group(1)
-                    try:
-                        components = [int(x) for x in version_str.split('.')]
-
-                        if latest_version is None or components > latest_version:
-                            latest_version = components
-                            latest_version_id = version_id
-                            logger.info(f"Found newer version: {version_name} (ID: {version_id})")
-                    except ValueError:
-                        continue
-
-            if latest_version_id:
-                logger.info(f"Latest version ID for {issue_key}: {latest_version_id}")
-                return latest_version_id
-            else:
-                # Возвращаем ID последней версии из списка, если не удалось определить
-                return "22550"
-
-        except Exception as e:
-            logger.error(f"Error getting subsystem version for {issue_key}: {e}", exc_info=True)
-            return "22550"  # Возвращаем ID по умолчанию в случае ошибки

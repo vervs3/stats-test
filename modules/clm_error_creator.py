@@ -90,6 +90,94 @@ class ClmErrorCreator:
         if not os.path.exists(self.results_dir):
             os.makedirs(self.results_dir)
 
+    def _get_component_mapping_data(self, component):
+        """
+        Get Product Group and Subsystem mapping data for a given component.
+        Enhanced to support specific component to Product Group and Subsystem mappings.
+
+        Args:
+            component (str): Component name from the source issue
+
+        Returns:
+            tuple: (product_group_id, subsystem_id, subsystem_name, subsystem_version_id)
+        """
+        # Default values
+        default_product_group_id = "1011"  # DIGITAL_BSS
+        default_subsystem_id = "1011"  # NBSS_CORE
+        default_subsystem_name = "NBSS_CORE"
+        default_version_id = "22550"  # Default version ID
+
+        # If no component provided, return defaults
+        if not component:
+            logger.warning(f"No component provided, using defaults (DIGITAL_BSS/NBSS_CORE)")
+            return default_product_group_id, default_subsystem_id, default_subsystem_name, default_version_id
+
+        # Convert component to lowercase for case-insensitive matching
+        component_lower = component.lower()
+        logger.info(f"Getting mapping data for component '{component}'")
+
+        # ВАЖНО: Специальная проверка для компонентов tailored.xxx
+        if component_lower.startswith("tailored."):
+            tailored_product_group_id = "1011"  # DIGITAL_BSS (можно изменить при необходимости)
+            tailored_subsystem_id = "27227"  # ID для TAILORED_NBSS 2 (используйте правильный ID)
+            tailored_subsystem_name = "TAILORED_NBSS 2"
+            tailored_version_id = "2.1.0"  # ID версии для TAILORED_NBSS 2 (используйте правильный ID)
+
+            logger.info(f"Component '{component}' matched as tailored component, mapping to TAILORED_NBSS 2")
+            return tailored_product_group_id, tailored_subsystem_id, tailored_subsystem_name, tailored_version_id
+
+        # Specific component mappings as provided
+        component_mappings = {
+            # Format: component_pattern: (product_group_id, subsystem_id, subsystem_name, version_id)
+            # Original mappings
+            "lis": ("992", "27228", "LIS 8", "8.9.1"),  # RND, LIS 8
+            "cnc": ("992", "14257", "CNC 9", "11.8.0"),  # RND, CNC 9
+            "crab": ("992", "23636", "CRAB 9", "9.19.0"),  # RND, CRAB 9
+            "fpm": ("992", "23967", "FPM 3", "3.2.2"),  # RND, FPM 3
+            "praim": ("992", "23921", "PRAIM 1", "1.3.0"),  # RND, PRAIM 1
+            "cpm": ("952", "14250", "CPM 10", "11.6.0"),  # CRM, CPM 10
+            "sso": ("974", "23635", "SSO 10", "10.17.0"),  # ISEM, SSO 10
+            "ats": ("974", "23635", "SSO 10", "10.17.0"),  # ISEM, SSO 10
+
+            # DIGITAL_BSS mappings (kept from original logic)
+            "udb": ("1011", "23924", "UDB", "2.7.0"),
+            "nus": ("1011", "23932", "NUS", "1.5.2"),
+            "nbssportal": ("1011", "27398", "NBSSPORTAL", "1.0.0"),
+            "chm": ("1011", "23923", "CHM", "22550"),
+            "apc": ("1011", "23923", "APC", "1.5.0"),
+            "csm": ("1011", "23817", "CSM", "1.5.1"),
+            "ecs": ("1011", "14187", "ECS", "22550"),
+            "npm": ("1011", "27400", "NPM_PORTAL", "22550"),
+            "nsg": ("1011", "27373", "NSG", "1.0.0"),
+            "pass": ("1011", "23764", "PASS", "1.5.3"),
+            "payment": ("1011", "14274", "PAYMENT_MANAGEMENT", "3.2.3"),
+            "vms": ("1011", "23767", "VMS", "1.2.0"),
+
+            # New mappings
+            "gus": ("980", "23920", "GUS 4", "4.11.1"),  # BFAM, GUS 4
+            "uniblp": ("973", "14263", "UNIBLP 2", "2.18.0"),  # PAYS, UNIBLP 2
+            "dms": ("1010", "27464", "DMS 2", "1.6.13"),  # UFM, DMS 2
+            "nlm": ("1010", "23815", "NLM 1", "1.3.0"),  # UFM, NLM 1
+            "osa": ("974", "23635", "SSO 10", "4.10.0"),  # ISEM, SSO 10
+            "dgs": ("967", "24119", "DGS 3", "3.3.3"),  # TDP, DGS 3
+            "lam": ("981", "23799", "LAM 1", "1.2.0"),  # RIM, LAM 1
+            "tailored": ("1011", "27227", "TAILORED_NBSS 2", "2.1.0"),  # DIGITAL_BSS, TAILORED_NBSS 2
+            "tailored.": ("1011", "27227", "TAILORED_NBSS 2", "2.1.0"),  # Match any tailored.xxx component
+            "psc": ("988", "23625", "PSC 10", "10.12.2"),  # PSC, PSC 10
+            "pic": ("949", "23657", "PIC 4", "4.12.1"),  # BIN, PIC 4
+            "sam": ("955", "14278", "SAM 1", "1.10.0")  # HEX, SAM 1
+        }
+
+        # Check for direct matches in component mappings
+        for pattern, mapping in component_mappings.items():
+            if pattern in component_lower:
+                logger.info(f"Found direct mapping for component '{component}' using pattern '{pattern}'")
+                return mapping
+
+        # If no specific mapping found, use default DIGITAL_BSS and NBSS_CORE
+        logger.warning(f"No specific mapping found for component '{component}', using defaults")
+        return default_product_group_id, default_subsystem_id, default_subsystem_name, default_version_id
+
     def _get_field_ids(self):
         """
         Get field IDs for CLM project from the create metadata
@@ -223,68 +311,25 @@ class ClmErrorCreator:
 
     def _match_component_to_subsystem(self, component):
         """
-        Match component to subsystem based on first 3 characters with improved matching
+        Match component to subsystem based on enhanced mapping logic.
+        Uses the new _get_component_mapping_data method for consistent mapping.
 
         Args:
             component (str): Component name
 
         Returns:
-            str: Matched subsystem or default value
+            str: Matched subsystem name or default value
         """
-        if not component or not self.subsystem_mapping:
-            logger.warning(f"No component provided or subsystem mapping is empty. Using default 'NBSS_CORE'")
+        if not component:
+            logger.warning(f"No component provided. Using default 'NBSS_CORE'")
             return "NBSS_CORE"  # Default subsystem
 
-        # Convert component to lowercase for case-insensitive matching
-        component_lower = component.lower()
-        logger.info(f"Matching component '{component}' to subsystem")
+        # Use the enhanced mapping function to get mapping data
+        _, _, subsystem_name, _ = self._get_component_mapping_data(component)
 
-        # List of subsystems with corresponding patterns to check
-        # Format: (subsystem, [list of patterns to check])
-        subsystem_patterns = [
-            ("UDB", ["udb", "user data"]),
-            ("NUS", ["nus", "notification"]),
-            ("NBSSPORTAL", ["portal", "nbssportal", "ui"]),
-            ("CHM", ["chm", "catalog", "product"]),
-            ("ATS", ["ats", "task", "automation"]),
-            ("SSO", ["sso", "auth", "login"]),
-            ("DMS", ["dms", "document"]),
-            ("TUDS", ["tuds", "technical"]),
-            ("LIS", ["lis", "license"]),
-            ("APC", ["apc"]),
-            ("CSM", ["csm"]),
-            ("ECS", ["ecs"]),
-            ("NPM_PORTAL", ["npm"]),
-            ("NSG", ["nsg"]),
-            ("PASS", ["pass"]),
-            ("PAYMENT_MANAGEMENT", ["payment"]),
-            ("VMS", ["vms"])
-        ]
-
-        # First try to find an exact match in the mapping
-        if component in self.subsystem_mapping:
-            logger.info(f"Found exact component match in mapping: '{component}'")
-            return component
-
-        # Then try to match the component using the patterns
-        for subsystem, patterns in subsystem_patterns:
-            for pattern in patterns:
-                if pattern in component_lower:
-                    if subsystem in self.subsystem_mapping:
-                        logger.info(
-                            f"Matched component '{component}' to subsystem '{subsystem}' using pattern '{pattern}'")
-                        return subsystem
-
-        # If no pattern match, try to find a match based on first 3 characters
-        for subsystem in self.subsystem_mapping:
-            if subsystem and len(subsystem) >= 3 and len(component) >= 3:
-                if subsystem[:3].lower() in component_lower or component_lower[:3] in subsystem.lower():
-                    logger.info(f"Matched component '{component}' to subsystem '{subsystem}' using first 3 characters")
-                    return subsystem
-
-        # If no match found, log and return default
-        logger.warning(f"No subsystem match found for component '{component}', using default 'NBSS_CORE'")
-        return "NBSS_CORE"  # Default subsystem
+        # Return just the subsystem name for backward compatibility
+        logger.info(f"Matched component '{component}' to subsystem '{subsystem_name}'")
+        return subsystem_name
 
     def get_field_options(self, field_id):
         """
@@ -591,7 +636,7 @@ class ClmErrorCreator:
 
     def create_clm_error(self, issue_key):
         """
-        Create a CLM Error issue for the given Jira issue key
+        Create a CLM Error issue for the given Jira issue key with enhanced component mapping
 
         Args:
             issue_key (str): Jira issue key
@@ -612,47 +657,15 @@ class ClmErrorCreator:
                 logger.error(f"Could not get details for issue {issue_key}, aborting CLM Error creation")
                 return None
 
-            # Define the subsystem IDs mapping first
-            subsystem_ids = {
-                "NBSS_CORE": "1011",  # Default if not matched to a specific ID
-                "APC": "23923",
-                "CSM": "23817",
-                "ECS": "14187",
-                "NBSSPORTAL": "27398",
-                "NPM_PORTAL": "27400",
-                "NSG": "27373",
-                "NUS": "23932",
-                "PASS": "23764",
-                "PAYMENT_MANAGEMENT": "14274",
-                "UDB": "23924",
-                "VMS": "23767"
-            }
-
-            # Match component to subsystem
+            # Get component from issue details
             component = issue_details.get('component', '')
-            subsystem = self._match_component_to_subsystem(component)
-            logger.info(f"Using subsystem '{subsystem}' for issue {issue_key} with component '{component}'")
 
-            # Determine the subsystem ID based on the matched subsystem
-            subsystem_id = None
-            if subsystem:
-                # First check for exact match
-                if subsystem in subsystem_ids:
-                    subsystem_id = subsystem_ids[subsystem]
-                    logger.info(f"Found exact subsystem ID match: {subsystem_id} for {subsystem}")
-                else:
-                    # Try to match based on prefix
-                    for sub_name, sub_id in subsystem_ids.items():
-                        if subsystem.startswith(sub_name) or sub_name.startswith(subsystem):
-                            subsystem_id = sub_id
-                            logger.info(
-                                f"Found partial subsystem ID match: {subsystem_id} for {subsystem} using {sub_name}")
-                            break
+            # Use the enhanced component mapping function
+            product_group_id, subsystem_id, subsystem_name, subsystem_version_id = self._get_component_mapping_data(
+                component)
 
-            # Fallback to NBSS_CORE (default subsystem) if no match found
-            if not subsystem_id:
-                subsystem_id = subsystem_ids.get("NBSS_CORE", "1011")
-                logger.info(f"No subsystem ID match found, using default: {subsystem_id}")
+            logger.info(
+                f"Using mapped values: Product Group ID={product_group_id}, Subsystem ID={subsystem_id}, Subsystem Name={subsystem_name}")
 
             # Create CLM Error issue
             url = f"{self.jira_url}/rest/api/2/issue/"
@@ -672,11 +685,11 @@ class ClmErrorCreator:
                 }
             }
 
-            # Add custom fields with proper ID values
+            # Add custom fields with proper ID values using enhanced mapping
             fields_to_set = [
-                # Basic fields
-                ('Product Group', '1011'),  # ID for DIGITAL_BSS
-                ('Subsystem', subsystem_id),  # Use the resolved subsystem ID
+                # Basic fields with enhanced mapping
+                ('Product Group', product_group_id),  # Mapped Product Group ID
+                ('Subsystem', subsystem_id),  # Mapped Subsystem ID
                 ('Urgency', 'B - High'),  # Keep as is if ID not known
                 ('Company', '825'),  # Keep as is
                 ('Production/Test', 'DEVELOPMENT'),  # Keep as is if ID not known
