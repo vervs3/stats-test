@@ -24,11 +24,12 @@
                             <li>Issue Type: Error</li>
                             <li>Summary: импортируется из Summary оригинального JIRA issue</li>
                             <li>Description: импортируется из Description оригинального JIRA issue</li>
-                            <li>Product Group: DIGITAL_BSS</li>
+                            <li>Product Group: определяется на основе компонента исходной задачи</li>
                             <li>Subsystem: определяется на основе компонента исходной задачи</li>
                             <li>Urgency: B - High</li>
-                            <li>Company: investment (ID: 825)</li>
+                            <li>Company: investment</li>
                             <li>Production/Test: DEVELOPMENT</li>
+                            <li>В течение 20 мин созданный CLM Error переводится в Received</li>
                         </ul>
                     </div>
 
@@ -72,8 +73,17 @@
     <div class="row mb-4">
         <div class="col-md-12">
             <div class="card">
-                <div class="card-header">
+                <div class="card-header d-flex justify-content-between align-items-center">
                     <h3>История создания CLM Error</h3>
+                    <div class="results-per-page">
+                        <label for="per-page-select" class="me-2">Показывать:</label>
+                        <select id="per-page-select" class="form-select form-select-sm d-inline-block" style="width: auto;">
+                            <option value="10" {% if pagination.per_page == 10 %}selected{% endif %}>10</option>
+                            <option value="20" {% if pagination.per_page == 20 %}selected{% endif %}>20</option>
+                            <option value="50" {% if pagination.per_page == 50 %}selected{% endif %}>50</option>
+                            <option value="100" {% if pagination.per_page == 100 %}selected{% endif %}>100</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="card-body">
                     {% if creation_results %}
@@ -88,7 +98,7 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {% for result in creation_results|sort(attribute='timestamp', reverse=True) %}
+                                    {% for result in creation_results %}
                                     <tr>
                                         <td>
                                             <a href="https://jira.nexign.com/browse/{{ result.source_key }}" target="_blank">
@@ -117,6 +127,63 @@
                                 </tbody>
                             </table>
                         </div>
+
+                        <!-- Pagination controls -->
+                        {% if pagination.total_pages > 1 %}
+                        <nav aria-label="История создания CLM Error">
+                            <ul class="pagination justify-content-center">
+                                <!-- Previous button -->
+                                <li class="page-item {% if pagination.page == 1 %}disabled{% endif %}">
+                                    <a class="page-link" href="?page={{ pagination.page - 1 }}&per_page={{ pagination.per_page }}" {% if pagination.page == 1 %}tabindex="-1" aria-disabled="true"{% endif %}>
+                                        Предыдущая
+                                    </a>
+                                </li>
+
+                                <!-- Page numbers -->
+                                {% set start_page = [1, pagination.page - 2]|max %}
+                                {% set end_page = [pagination.total_pages, start_page + 4]|min %}
+                                {% set start_page = [1, end_page - 4]|max %}
+
+                                {% if start_page > 1 %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page=1&per_page={{ pagination.per_page }}">1</a>
+                                    </li>
+                                    {% if start_page > 2 %}
+                                        <li class="page-item disabled"><span class="page-link">...</span></li>
+                                    {% endif %}
+                                {% endif %}
+
+                                {% for p in range(start_page, end_page + 1) %}
+                                    <li class="page-item {% if p == pagination.page %}active{% endif %}">
+                                        <a class="page-link" href="?page={{ p }}&per_page={{ pagination.per_page }}">{{ p }}</a>
+                                    </li>
+                                {% endfor %}
+
+                                {% if end_page < pagination.total_pages %}
+                                    {% if end_page < pagination.total_pages - 1 %}
+                                        <li class="page-item disabled"><span class="page-link">...</span></li>
+                                    {% endif %}
+                                    <li class="page-item">
+                                        <a class="page-link" href="?page={{ pagination.total_pages }}&per_page={{ pagination.per_page }}">{{ pagination.total_pages }}</a>
+                                    </li>
+                                {% endif %}
+
+                                <!-- Next button -->
+                                <li class="page-item {% if pagination.page == pagination.total_pages %}disabled{% endif %}">
+                                    <a class="page-link" href="?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}" {% if pagination.page == pagination.total_pages %}tabindex="-1" aria-disabled="true"{% endif %}>
+                                        Следующая
+                                    </a>
+                                </li>
+                            </ul>
+                        </nav>
+                        <div class="text-center mt-2">
+                            <small class="text-muted">
+                                Показаны записи {{ (pagination.page - 1) * pagination.per_page + 1 }} -
+                                {{ [pagination.page * pagination.per_page, pagination.total_results]|min }}
+                                из {{ pagination.total_results }}
+                            </small>
+                        </div>
+                        {% endif %}
                     {% else %}
                         <div class="alert alert-info">
                             <p>История создания CLM Error пуста.</p>
@@ -194,5 +261,4 @@
 
 {% block scripts %}
     <script src="{{ url_for('static', filename='js/clm_error_creator.js') }}"></script>
-
 {% endblock %}

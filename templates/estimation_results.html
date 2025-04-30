@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block title %}Анализ оценок Jira{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/estimation.css') }}">
+{% endblock %}
+
+{% block header %}Анализ оценок Jira{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <p class="lead">
+        Этот отчет сравнивает оценки задач Jira до 10 января 2025 года с текущими оценками.
+        Увеличение оценок выделено <span class="status-increased">красным</span>,
+        уменьшение оценок выделено <span class="status-decreased">зеленым</span>.
+    </p>
+
+    <!-- Форма фильтрации -->
+    <div class="filter-form">
+        <form action="{{ url_for('view_estimation_results') }}" method="get" class="row g-3">
+            <div class="col-md-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="sprint-filter" name="sprint_filter" value="true" {% if sprint_filter %}checked{% endif %}>
+                    <label class="form-check-label" for="sprint-filter">
+                        Фильтровать задачи New Feature по спринтам 2025 Q1-Q4
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="all-tasks" name="all_tasks" value="true" {% if all_tasks %}checked{% endif %}>
+                    <label class="form-check-label" for="all-tasks">
+                        Включить все типы задач (не только New Feature)
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="refresh" name="refresh" value="true">
+                    <label class="form-check-label" for="refresh">
+                        Принудительно обновить данные
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-3 text-end">
+                <button type="submit" class="btn btn-primary">Применить фильтры</button>
+                <button type="button" id="export-excel" class="btn btn-success ms-2">
+                    <i class="bi bi-file-excel"></i> Экспорт в Excel
+                </button>
+            </div>
+        </form>
+
+        <!-- Дополнительные фильтры для таблицы -->
+        <div class="row mt-3">
+            <div class="col-md-3">
+                <div class="input-group">
+                    <span class="input-group-text">Поиск</span>
+                    <input type="text" class="form-control" id="search-estimation" placeholder="Поиск по ключу или описанию">
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="input-group">
+                    <span class="input-group-text">Тип задачи</span>
+                    <select class="form-select" id="issue-type-filter">
+                        <option value="all">Все типы</option>
+                        {% if results %}
+                            {% for issue_type in results.issue_type_metrics.keys() %}
+                                <option value="{{ issue_type }}">{{ issue_type }}</option>
+                            {% endfor %}
+                        {% endif %}
+                    </select>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="changed-only" name="changed-only">
+                    <label class="form-check-label" for="changed-only">
+                        Только задачи с изменениями оценок
+                    </label>
+                </div>
+            </div>
+            <div class="col-md-3 text-end">
+                <button id="toggle-subtasks" class="btn btn-outline-secondary">Скрыть подзадачи</button>
+            </div>
+        </div>
+    </div>
+
+    {% if results %}
+    <!-- Карточки с итогами -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card summary-card h-100">
+                <div class="card-body text-center">
+                    <div class="summary-value">{{ results.total_metrics.total_issues }}</div>
+                    <div class="summary-label">Всего задач</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card summary-card h-100">
+                <div class="card-body text-center">
+                    <div class="summary-value">{{ results.total_metrics.total_historical|round(2) }}</div>
+                    <div class="summary-label">Исходная оценка (дни)</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card summary-card h-100">
+                <div class="card-body text-center">
+                    <div class="summary-value">{{ results.total_metrics.total_current|round(2) }}</div>
+                    <div class="summary-label">Текущая оценка (дни)</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card summary-card h-100">
+                <div class="card-body text-center">
+                    <div class="summary-value {% if results.total_metrics.difference > 0 %}difference-positive{% elif results.total_metrics.difference < 0 %}difference-negative{% endif %}">
+                        {{ results.total_metrics.difference|round(2) }}
+                    </div>
+                    <div class="summary-label">Разница (дни)</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Сводка по типам задач -->
+    <div class="card mb-4">
+        <div class="card-header">
+            <h4>Сводка по типам задач</h4>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Тип задачи</th>
+                            <th>Количество</th>
+                            <th>Исходная оценка (дни)</th>
+                            <th>Текущая оценка (дни)</th>
+                            <th>Разница</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for issue_type, metrics in results.issue_type_metrics.items() %}
+                        <tr>
+                            <td>{{ issue_type }}</td>
+                            <td>{{ metrics.count }}</td>
+                            <td>{{ metrics.historical|round(2) }}</td>
+                            <td>{{ metrics.current|round(2) }}</td>
+                            <td class="{% if metrics.difference > 0 %}text-danger{% elif metrics.difference < 0 %}text-success{% endif %}">
+                                {{ metrics.difference|round(2) }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Результаты анализа -->
+    <div class="card">
+        <div class="card-header">
+            <h4>Детальные оценки задач</h4>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table estimation-table">
+                    <thead>
+                        <tr>
+                            <th data-sort="issue-key" class="sortable">Ключ задачи <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                            <th data-sort="summary" class="sortable">Описание <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                            <th data-sort="issue-type" class="sortable">Тип задачи <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                            <th data-sort="created" class="sortable">Дата создания <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                            <th data-sort="historical" class="sortable">Исходная оценка (дни) <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                            <th data-sort="current" class="sortable">Текущая оценка (дни) <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                            <th data-sort="difference" class="sortable">Разница <i class="bi bi-arrow-down-up sort-icon"></i></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in results.results %}
+                        <tr class="{% if item.level == 0 %}parent-row{% else %}subtask-row{% endif %} {% if item.difference != 0 %}changed-estimate{% endif %}">
+                            <td>
+                                <a href="https://jira.nexign.com/browse/{{ item.issue_key }}" target="_blank">{{ item.issue_key }}</a>
+                            </td>
+                            <td {% if item.level > 0 %}data-parent-key="{{ item.parent_key }}"{% endif %}>{{ item.summary }}</td>
+                            <td>{{ item.issue_type }}</td>
+                            <td>{{ item.created[:10] }}</td>
+                            <td>{{ item.historical_estimate_days }}</td>
+                            <td>{{ item.current_estimate_days }}</td>
+                            <td class="status-{{ item.status }}">
+                                {{ item.difference|round(2) }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="alert alert-warning">
+        <h4 class="alert-heading">Нет данных для анализа оценок!</h4>
+        <p>В настоящее время нет доступных данных для анализа оценок Jira.</p>
+        <hr>
+        <p class="mb-0">
+            <a href="{{ url_for('view_estimation_results', refresh=true) }}" class="btn btn-primary">
+                Обновить данные
+            </a>
+        </p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+<script src="{{ url_for('static', filename='js/estimation.js') }}"></script>
+{% endblock %}

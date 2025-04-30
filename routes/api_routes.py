@@ -697,7 +697,10 @@ def register_api_routes(app):
                         # Add condition to exclude merge request mentions in summary and description
                         no_merge_requests = "(summary !~ \"merge request\" AND summary !~ \"SSO-\" AND description !~ \"merge request\" AND description !~ \"SSO-\")"
 
-                        jql = f'project = {project} AND {closed_statuses} AND {no_comments} AND {no_attachments} AND {no_links} AND {no_merge_requests}'
+                        # NEW: Add condition to exclude tasks mentioned in remote links
+                        no_remote_mentions = "issueFunction not in linkedIssuesOfRemote(\"relationship\", \"mentioned in\")"
+
+                        jql = f'project = {project} AND {closed_statuses} AND {no_comments} AND {no_attachments} AND {no_links} AND {no_merge_requests} AND {no_remote_mentions}'
                         logger.info(
                             f"Using query for closed tasks without comments, attachments, links, and merge request mentions")
                     else:

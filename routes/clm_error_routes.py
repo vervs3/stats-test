@@ -16,19 +16,51 @@ def register_clm_error_routes(app):
         """Render the CLM Error creator page"""
         logger.info("Rendering CLM Error creator page")
 
+        # Get page number from query parameters
+        page = request.args.get('page', default=1, type=int)
+        per_page = request.args.get('per_page', default=10, type=int)
+
+        # Validate page and per_page parameters
+        if page < 1:
+            page = 1
+        if per_page < 1 or per_page > 100:
+            per_page = 10
+
+        logger.info(f"Pagination parameters: page={page}, per_page={per_page}")
+
         # Get subsystems for display
         subsystems = get_subsystems_for_product()
         logger.info(f"Loaded {len(subsystems)} subsystems for display")
 
-        # Get previous creation results
+        # Get creation results
         creator = ClmErrorCreator()
-        creation_results = creator.get_creation_results()
-        logger.info(f"Retrieved {len(creation_results)} previous CLM error creation results")
+        all_creation_results = creator.get_creation_results()
+
+        # Sort results by timestamp (newest first)
+        all_creation_results.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+
+        # Calculate pagination parameters
+        total_results = len(all_creation_results)
+        total_pages = (total_results + per_page - 1) // per_page  # ceil division
+
+        # Apply pagination
+        start_index = (page - 1) * per_page
+        end_index = start_index + per_page
+        creation_results = all_creation_results[start_index:end_index]
+
+        logger.info(
+            f"Pagination: showing {len(creation_results)} of {total_results} results (page {page} of {total_pages})")
 
         return render_template('clm_error_creator.html',
                                subsystems=subsystems,
                                creation_results=creation_results,
-                               active_tab='clm_error')
+                               active_tab='clm_error',
+                               pagination={
+                                   'page': page,
+                                   'per_page': per_page,
+                                   'total_results': total_results,
+                                   'total_pages': total_pages
+                               })
 
     @app.route('/api/clm-error-results', methods=['GET'])
     def get_clm_error_results():

@@ -87,6 +87,16 @@ def collect_daily_data():
     logger.info(f"Collecting daily data for NBSS Dashboard at {DASHBOARD_UPDATE_HOUR}:{DASHBOARD_UPDATE_MINUTE}")
 
     try:
+        # Also collect Jira estimation data
+        from modules.jira_estimation import collect_estimation_data
+        logger.info("Starting collection of Jira estimation data")
+        # Use filter ID 114476 for estimation data
+        estimation_filter_id = "114924"
+        # Collect both with and without sprint filter
+        collect_estimation_data(filter_id=estimation_filter_id, sprint_filter=True, all_tasks=True)
+        collect_estimation_data(filter_id=estimation_filter_id, sprint_filter=False, all_tasks=False)
+        logger.info("Completed collection of Jira estimation data")
+
         # Initialize Jira analyzer
         analyzer = JiraAnalyzer()
 
@@ -524,3 +534,28 @@ def get_dashboard_data():
             'has_raw_data': False,
             'refresh_interval': DASHBOARD_REFRESH_INTERVAL
         }
+
+
+def has_remote_mentions(issue):
+    """
+    Check if an issue has remote mentions of 'relationship' type
+
+    Args:
+        issue (dict): Raw Jira issue data
+
+    Returns:
+        bool: True if issue has remote mentions, False otherwise
+    """
+    try:
+        # Check if remoteLinks exist in the issue
+        remote_links = issue.get('fields', {}).get('remotelinks', [])
+
+        for link in remote_links:
+            # Check link type - you might need to adjust this based on your specific Jira configuration
+            if link.get('relationship', '').lower() == 'mentioned in':
+                return True
+
+        return False
+    except Exception as e:
+        logger.error(f"Error checking remote mentions: {e}")
+        return False

@@ -381,13 +381,12 @@ class ClmStatusTransitioner:
 
                     # Check if we need to transition to Studying
                     # Добавляем поддержку перехода из статуса Authorized
-                    if current_status in ['Open',
-                                          'Authorized'] and time_since_creation.total_seconds() >= self.time_delay:
+                    if current_status in ['Authorized'] and time_since_creation.total_seconds() >= self.time_delay:
                         logger.info(f"Time to transition {clm_key} to Studying from {current_status}")
                         self._transition_to_studying(clm_key)
 
                     # Always try to transition to Received if not already in a final status
-                    if current_status in ['Open', 'Studying', 'Authorized']:
+                    if current_status in ['Studying']:
                         # If more than 10 minutes passed since creation, try to transition to Received
                         if time_since_creation.total_seconds() >= (self.time_delay * 2):
                             logger.info(f"Time to transition {clm_key} to Received from {current_status}")
@@ -397,7 +396,7 @@ class ClmStatusTransitioner:
                 logger.error(f"Error in CLM transition monitor: {e}", exc_info=True)
 
             # Sleep for a while before checking again
-            time.sleep(60)  # Check every minute
+            time.sleep(300)  # Check every minute
 
     def _get_issue_details(self, issue_key):
         """
