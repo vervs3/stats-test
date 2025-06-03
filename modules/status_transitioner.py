@@ -69,6 +69,84 @@ class ClmStatusTransitioner:
         self.create_meta = self.get_create_meta()
         self.field_ids = self._get_field_ids()
 
+        # Initialize tracking for CLM Errors that have been in Received status
+        self.received_tracking_file = os.path.join('data', 'clm_results', 'received_tracking.json')
+        self.received_tracking = self._load_received_tracking()
+
+    def _load_received_tracking(self):
+        """
+        Load tracking data for CLM Errors that have been in Received status
+
+        Returns:
+            dict: Dictionary with CLM Error keys and timestamps when they were first moved to Received
+        """
+        try:
+            if os.path.exists(self.received_tracking_file):
+                with open(self.received_tracking_file, 'r', encoding='utf-8') as f:
+                    tracking_data = json.load(f)
+                    logger.info(f"Loaded received tracking data for {len(tracking_data)} CLM Errors")
+                    return tracking_data
+            else:
+                logger.info("No received tracking file found, creating new tracking")
+                return {}
+        except Exception as e:
+            logger.error(f"Error loading received tracking data: {e}", exc_info=True)
+            return {}
+
+    def _save_received_tracking(self):
+        """
+        Save tracking data for CLM Errors that have been in Received status
+        """
+        try:
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(self.received_tracking_file), exist_ok=True)
+
+            with open(self.received_tracking_file, 'w', encoding='utf-8') as f:
+                json.dump(self.received_tracking, f, indent=2, ensure_ascii=False)
+                logger.info(f"Saved received tracking data for {len(self.received_tracking)} CLM Errors")
+        except Exception as e:
+            logger.error(f"Error saving received tracking data: {e}", exc_info=True)
+
+    def _mark_as_received(self, clm_key):
+        """
+        Mark a CLM Error as having been in Received status
+
+        Args:
+            clm_key (str): CLM Error issue key
+        """
+        self.received_tracking[clm_key] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        self._save_received_tracking()
+        logger.info(f"Marked {clm_key} as having been in Received status")
+
+    def _was_in_received(self, clm_key):
+        """
+        Check if a CLM Error has been in Received status before
+
+        Args:
+            clm_key (str): CLM Error issue key
+
+        Returns:
+            bool: True if the CLM Error has been in Received status before
+        """
+        return clm_key in self.received_tracking
+
+    def _is_created_recently(self, created_time, max_hours=3):
+        """
+        Check if a CLM Error was created within the specified number of hours
+
+        Args:
+            created_time (datetime): Creation time of the CLM Error
+            max_hours (int): Maximum number of hours (default: 3)
+
+        Returns:
+            bool: True if created within max_hours, False otherwise
+        """
+        time_since_creation = datetime.now() - created_time
+        hours_since_creation = time_since_creation.total_seconds() / 3600
+
+        logger.debug(f"Hours since creation: {hours_since_creation:.2f}, max allowed: {max_hours}")
+        return hours_since_creation <= max_hours
+
     def _get_component_mapping_data(self, component):
         """
         Get Product Group and Subsystem mapping data for a given component.
@@ -257,7 +335,6 @@ class ClmStatusTransitioner:
                 'Production/Test': 'customfield_17200'
             }
 
-
     def get_field_options(self, field_id):
         """
         Get options for a field from the create metadata or API
@@ -338,7 +415,7 @@ class ClmStatusTransitioner:
 
     def _monitor_transitions(self):
         """Main monitoring loop that checks for CLM Errors that need transitions
-        С поддержкой перехода из статуса Authorized"""
+        С поддержкой перехода из статуса Authorized и ограничением по времени создания"""
         logger.info("CLM Error transition monitor started")
 
         while self.running:
@@ -365,6 +442,11 @@ class ClmStatusTransitioner:
                         logger.error(f"Could not parse timestamp for {clm_key}: {created_time_str}")
                         continue
 
+                    # NEW: Check if CLM Error was created within 3 hours
+                    if not self._is_created_recently(created_time, max_hours=3):
+                        logger.debug(f"Skipping {clm_key}: created more than 3 hours ago ({created_time_str})")
+                        continue
+
                     # Get current status
                     issue_details = self._get_issue_details(clm_key)
                     if not issue_details:
@@ -385,18 +467,28 @@ class ClmStatusTransitioner:
                         logger.info(f"Time to transition {clm_key} to Studying from {current_status}")
                         self._transition_to_studying(clm_key)
 
-                    # Always try to transition to Received if not already in a final status
+                    # Check if we need to transition to Received
                     if current_status in ['Studying']:
+                        # NEW: Check if this CLM Error has already been in Received status
+                        if self._was_in_received(clm_key):
+                            logger.info(
+                                f"Skipping transition to Received for {clm_key}: already was in Received status before")
+                            continue
+
                         # If more than 10 minutes passed since creation, try to transition to Received
                         if time_since_creation.total_seconds() >= (self.time_delay * 2):
                             logger.info(f"Time to transition {clm_key} to Received from {current_status}")
-                            self._transition_to_received(clm_key)
+                            success = self._transition_to_received(clm_key)
+
+                            # NEW: Mark as having been in Received if transition was successful
+                            if success:
+                                self._mark_as_received(clm_key)
 
             except Exception as e:
                 logger.error(f"Error in CLM transition monitor: {e}", exc_info=True)
 
             # Sleep for a while before checking again
-            time.sleep(300)  # Check every minute
+            time.sleep(300)  # Check every 5 minutes
 
     def _get_issue_details(self, issue_key):
         """
@@ -658,7 +750,6 @@ class ClmStatusTransitioner:
 
             # Заполняем опции на основе данных со скриншота
             # Для поля customfield_12408 (Subsystem version)
-
 
             # Другие поля с жестко заданными значениями
             self.field_options_cache['customfield_12409'] = [
@@ -1081,7 +1172,6 @@ class ClmStatusTransitioner:
                     if name in field_mappings and field_mappings[name] is None:
                         field_mappings[name] = id
                         logger.info(f"Mapped field '{name}' to ID '{id}' from API")
-
 
             # Fallback to hardcoded values if not found
             if not field_mappings['Product Group']:
